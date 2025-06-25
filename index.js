@@ -472,8 +472,10 @@ function prepareSingleElementForHtml2CanvasPro(originalElement) {
         });
     });
 
-    // 删除无需渲染的标签
-    element.querySelectorAll('script, style, noscript, iframe, canvas').forEach(el => el.remove());
+    // *** MODIFICATION START: Do not remove iframes ***
+    // 删除无需渲染的标签 (保留 iframe 让后续函数处理)
+    element.querySelectorAll('script, style, noscript, canvas').forEach(el => el.remove());
+    // *** MODIFICATION END ***
     
     // 为已知问题元素添加样式修复
     element.querySelectorAll('.mes_reasoning, .mes_reasoning_delete, .mes_reasoning_edit_cancel').forEach(el => {
@@ -488,6 +490,92 @@ function prepareSingleElementForHtml2CanvasPro(originalElement) {
     return element;
 }
 
+// *** NEW FUNCTION START: Recursively handle iframes ***
+/**
+ * 递归处理克隆元素内的 iframe，将其内容渲染为图片并替换
+ * @param {HTMLElement} clonedElement - 准备截图的克隆元素
+ * @param {Document} originalDocument - 原始文档对象，用于获取 iframe 的 contentWindow
+ */
+async function handleIframesAsync(clonedElement, originalDocument) {
+    const iframes = clonedElement.querySelectorAll('iframe');
+    if (iframes.length === 0) {
+        return;
+    }
+
+    // 找到原始文档中对应的 iframe 元素
+    const originalIframes = Array.from(originalDocument.querySelectorAll('iframe'));
+
+    const promises = Array.from(iframes).map(async (iframe, index) => {
+        const originalIframe = originalIframes[index];
+        if (!originalIframe) return;
+
+        try {
+            // 检查同源策略
+            const isSameOrigin = originalIframe.contentWindow && originalIframe.contentWindow.document;
+
+            if (isSameOrigin) {
+                console.log(`${PLUGIN_NAME}: 发现同源 iframe，正在递归截图...`, originalIframe.src);
+                const iframeDoc = originalIframe.contentWindow.document;
+                
+                // 对 iframe 的 body 进行截图
+                const canvas = await html2canvas(iframeDoc.body, {
+                    // 传递一些关键选项，确保一致性
+                    scale: config.html2canvasOptions.scale,
+                    useCORS: true,
+                    allowTaint: true,
+                    backgroundColor: window.getComputedStyle(iframeDoc.body).backgroundColor,
+                    // 避免在 iframe 内部再次触发无限递归
+                    foreignObjectRendering: false, 
+                });
+                
+                const imgDataUrl = canvas.toDataURL('image/png');
+                
+                // 创建一个 img 元素来替换 iframe
+                const img = document.createElement('img');
+                img.src = imgDataUrl;
+                img.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
+                img.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
+                img.style.border = 'none'; // 确保替换后的图片没有多余的边框
+
+                // 在克隆的 DOM 中替换 iframe
+                if (iframe.parentNode) {
+                    iframe.parentNode.replaceChild(img, iframe);
+                }
+            } else {
+                console.warn(`${PLUGIN_NAME}: 发现跨源 iframe，无法截图，将保留为空白`, originalIframe.src);
+                // 对于跨源 iframe，可以创建一个占位符
+                const placeholder = document.createElement('div');
+                placeholder.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
+                placeholder.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
+                placeholder.style.border = '1px dashed #999';
+                placeholder.style.backgroundColor = '#f0f0f0';
+                placeholder.style.display = 'flex';
+                placeholder.style.alignItems = 'center';
+                placeholder.style.justifyContent = 'center';
+                placeholder.style.fontSize = '12px';
+                placeholder.style.color = '#666';
+                placeholder.textContent = '跨源内容无法截取';
+                if (iframe.parentNode) {
+                    iframe.parentNode.replaceChild(placeholder, iframe);
+                }
+            }
+        } catch (error) {
+            console.error(`${PLUGIN_NAME}: 处理 iframe 时出错:`, error, originalIframe.src);
+            // 出错时也替换为占位符
+             const errorPlaceholder = document.createElement('div');
+             errorPlaceholder.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
+             errorPlaceholder.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
+             errorPlaceholder.style.border = '1px dashed red';
+             errorPlaceholder.textContent = 'Iframe 渲染错误';
+             if (iframe.parentNode) {
+                 iframe.parentNode.replaceChild(errorPlaceholder, iframe);
+             }
+        }
+    });
+
+    await Promise.all(promises);
+}
+// *** NEW FUNCTION END ***
 
 // 核心截图函数：创建一个临时容器，放入净化后的元素，然后渲染容器
 async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = {}) {
@@ -553,6 +641,11 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
 
         tempContainer.appendChild(preparedElement);
         document.body.appendChild(tempContainer);
+
+        // *** MODIFICATION START: Handle iframes before capture ***
+        if (overlay) updateOverlay(overlay, '正在处理内联框架(iframe)...', 0.15);
+        await handleIframesAsync(preparedElement, elementToCapture.ownerDocument);
+        // *** MODIFICATION END ***
 
         // 只有当有设置延迟时才等待
         if (config.screenshotDelay > 0) {
@@ -727,6 +820,15 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
         }
     });
     document.body.appendChild(tempContainer);
+    
+    // *** MODIFICATION START: Handle all iframes in the container ***
+    if (overlay) updateOverlay(overlay, '正在处理所有内联框架(iframe)...', 0.15);
+    // 注意：第二个参数是原始文档
+    if (messagesToCapture.length > 0) {
+        await handleIframesAsync(tempContainer, messagesToCapture[0].ownerDocument);
+    }
+    // *** MODIFICATION END ***
+
     // Give cloned and prepared elements time to settle and render within the tempContainer
     await new Promise(resolve => setTimeout(resolve, config.screenshotDelay));
 
