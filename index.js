@@ -30,7 +30,7 @@ import {
 } from '../../../utils.js';
 
 // 插件的命名空间，与 manifest.json 中的文件夹名称一致
-const PLUGIN_ID = 'scane2';
+const PLUGIN_ID = 'html2canvas-pro';
 const PLUGIN_NAME = 'ST截图3.0';
 
 // 插件的默认设置
@@ -92,6 +92,9 @@ function loadConfig() {
         config.html2canvasOptions.scale = defaultSettings.screenshotScale;
     }
     
+    // 添加调试输出
+    console.log('DEBUG: html2canvas配置加载', config.html2canvasOptions);
+    
     // 应用其他html2canvas设置
     config.html2canvasOptions.foreignObjectRendering = settings.useForeignObjectRendering;
     config.html2canvasOptions.letterRendering = settings.letterRendering !== undefined ? 
@@ -116,6 +119,67 @@ async function loadScript(src) {
         };
         document.head.appendChild(script);
     });
+}
+
+// --- START: NEW HELPER FUNCTION ---
+async function getDynamicBackground(elementForContext) {
+    const chatContainer = document.querySelector(config.chatContentSelector);
+    if (!chatContainer) {
+        return { color: '#1e1e1e', imageInfo: null };
+    }
+
+    const computedChatStyle = window.getComputedStyle(chatContainer);
+    
+    // 1. 获取 #chat 的背景颜色
+    let backgroundColor = '#1e1e1e'; // Fallback
+    if (computedChatStyle.backgroundColor && computedChatStyle.backgroundColor !== 'rgba(0, 0, 0, 0)' && computedChatStyle.backgroundColor !== 'transparent') {
+        backgroundColor = computedChatStyle.backgroundColor;
+    } else {
+        const pcbVar = getComputedStyle(document.body).getPropertyValue('--pcb');
+        if (pcbVar && pcbVar.trim()) {
+            backgroundColor = pcbVar.trim();
+        }
+    }
+    
+    // 2. 尝试获取背景图片
+    const bgElement = document.querySelector('#bg1, #bg2') || chatContainer;
+    const computedBgStyle = window.getComputedStyle(bgElement);
+    
+    let backgroundImageInfo = null;
+    if (computedBgStyle.backgroundImage && computedBgStyle.backgroundImage !== 'none') {
+        // 从 URL 中提取图片路径
+        const bgImageUrlMatch = computedBgStyle.backgroundImage.match(/url\("?(.+?)"?\)/);
+        if (bgImageUrlMatch) {
+            const bgImageUrl = bgImageUrlMatch[1];
+            
+            // 异步加载图片以获取其原始尺寸
+            const img = new Image();
+            img.src = bgImageUrl;
+            await new Promise(resolve => {
+                img.onload = resolve;
+                img.onerror = resolve; // 即使加载失败也继续
+            });
+
+            const elementRect = elementForContext.getBoundingClientRect();
+            const bgRect = bgElement.getBoundingClientRect();
+            const offsetX = elementRect.left - bgRect.left;
+            const offsetY = elementRect.top - bgRect.top;
+
+            backgroundImageInfo = {
+                url: bgImageUrl,
+                originalWidth: img.naturalWidth || bgRect.width, // 使用自然宽度，失败则回退
+                originalHeight: img.naturalHeight || bgRect.height,
+                styles: { // 保留样式供非平铺模式使用
+                    backgroundImage: computedBgStyle.backgroundImage,
+                    backgroundSize: computedBgStyle.backgroundSize,
+                    backgroundRepeat: computedBgStyle.backgroundRepeat,
+                    backgroundPosition: `-${offsetX}px -${offsetY}px`,
+                }
+            };
+        }
+    }
+    
+    return { color: backgroundColor, imageInfo: backgroundImageInfo };
 }
 
 // SillyTavern 插件入口点
@@ -445,306 +509,491 @@ jQuery(async () => {
 
 
 // --- 辅助函数：准备单个元素给 html2canvas-pro (通过克隆到临时容器) ---
+// 准备单个元素用于html2canvas截图（修复折叠状态问题）
 function prepareSingleElementForHtml2CanvasPro(originalElement) {
     if (!originalElement) return null;
 
+    // 1. 克隆原始元素（深度克隆）
     const element = originalElement.cloneNode(true);
     
-    // 移除所有按钮区域
-    element.querySelectorAll('.mes_buttons').forEach(buttonsArea => {
-        if (buttonsArea && buttonsArea.parentNode) {
-            buttonsArea.parentNode.removeChild(buttonsArea);
-        }
-    });
-    
-    // 新增：移除消息元数据显示元素（ID、时间、令牌计数）
-    const metaSelectors = [
-        '.mesIDDisplay', 
-        '.mes_timer', 
-        '.tokenCounterDisplay'
+    // 2. 复制计算样式
+    const computedStyle = window.getComputedStyle(originalElement);
+    const importantStyles = [
+        'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
+        'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+        'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+        'display', 'position', 'top', 'right', 'bottom', 'left',
+        'font-family', 'font-size', 'font-weight', 'line-height',
+        'color', 'background-color', 'border', 'border-radius',
+        'text-align', 'vertical-align', 'white-space', 'overflow', 'visibility'
     ];
     
-    metaSelectors.forEach(selector => {
-        element.querySelectorAll(selector).forEach(metaEl => {
-            if (metaEl && metaEl.parentNode) {
-                metaEl.parentNode.removeChild(metaEl);
-            }
+    importantStyles.forEach(style => {
+        element.style[style] = computedStyle[style];
+    });
+    
+    // 3. 移除不需要的元素
+    element.querySelectorAll('.mes_buttons').forEach(buttonsArea => {
+        buttonsArea?.parentNode?.removeChild(buttonsArea);
+    });
+    
+    ['mesIDDisplay', 'mes_timer', 'tokenCounterDisplay'].forEach(selector => {
+        element.querySelectorAll(`.${selector}`).forEach(el => {
+            el?.parentNode?.removeChild(el);
         });
     });
 
-    // *** MODIFICATION START: Do not remove iframes ***
-    // 删除无需渲染的标签 (保留 iframe 让后续函数处理)
     element.querySelectorAll('script, style, noscript, canvas').forEach(el => el.remove());
-    // *** MODIFICATION END ***
     
-    // 为已知问题元素添加样式修复
+    // 4. 修复样式问题
     element.querySelectorAll('.mes_reasoning, .mes_reasoning_delete, .mes_reasoning_edit_cancel').forEach(el => {
-        if (el && el.style) {
-            const style = el.style;
-            style.removeProperty('color');
-            style.removeProperty('background-color');
-            style.removeProperty('border-color');
+        if (el?.style) {
+            el.style.removeProperty('color');
+            el.style.removeProperty('background-color');
+            el.style.removeProperty('border-color');
         }
     });
+
+    // 5. 修复折叠状态同步问题（核心修复）
+    function syncDetailsState(origNode, cloneNode) {
+        if (!origNode || !cloneNode) return;
+        
+        // 同步details元素的open状态
+        if (origNode.tagName === 'DETAILS') {
+            const isOpen = origNode.hasAttribute('open');
+            
+            // 强制设置克隆节点的状态
+            if (isOpen) {
+                cloneNode.setAttribute('open', '');
+            } else {
+                cloneNode.removeAttribute('open');
+                
+                // 如果是折叠状态，移除所有非summary子节点
+                Array.from(cloneNode.childNodes).forEach(child => {
+                    if (child.tagName && child.tagName !== 'SUMMARY') {
+                        cloneNode.removeChild(child);
+                    }
+                });
+            }
+        }
+        
+        // 递归处理子节点
+        const origChildren = origNode.children || [];
+        const cloneChildren = cloneNode.children || [];
+        
+        if (origChildren.length === cloneChildren.length) {
+            for (let i = 0; i < origChildren.length; i++) {
+                syncDetailsState(origChildren[i], cloneChildren[i]);
+            }
+        }
+    }
+    
+    // 执行同步
+    syncDetailsState(originalElement, element);
+    
+    // 6. 确保元素可见
+    element.style.display = 'block';
+    element.style.visibility = 'visible';
+    element.style.opacity = '1';
+    element.style.width = originalElement.offsetWidth + 'px';
+    element.style.height = 'auto'; // 高度自适应
+    element.style.overflow = 'visible';
+    
+    // 7. 添加调试边框
+    element.style.border = '1px solid red'; // 临时添加边框以便调试
     
     return element;
 }
 
-// *** NEW FUNCTION START: Recursively handle iframes ***
-/**
- * 递归处理克隆元素内的 iframe，将其内容渲染为图片并替换
- * @param {HTMLElement} clonedElement - 准备截图的克隆元素
- * @param {Document} originalDocument - 原始文档对象，用于获取 iframe 的 contentWindow
- */
+// *** BUG修复 V2: 增加对 iframe 加载完成事件的等待 ***
 async function handleIframesAsync(clonedElement, originalDocument) {
     const iframes = clonedElement.querySelectorAll('iframe');
-    if (iframes.length === 0) {
-        return;
-    }
+    if (iframes.length === 0) return;
 
-    // 找到原始文档中对应的 iframe 元素
+    // 找到原始文档中的 iframes 以便操作
     const originalIframes = Array.from(originalDocument.querySelectorAll('iframe'));
 
-    const promises = Array.from(iframes).map(async (iframe, index) => {
+    // 为每一个 iframe 的处理创建一个 Promise
+    const promises = Array.from(iframes).map((iframe, index) => new Promise(async (resolve, reject) => {
         const originalIframe = originalIframes[index];
-        if (!originalIframe) return;
-
-        try {
-            // 检查同源策略
-            const isSameOrigin = originalIframe.contentWindow && originalIframe.contentWindow.document;
-
-            if (isSameOrigin) {
-                console.log(`${PLUGIN_NAME}: 发现同源 iframe，正在递归截图...`, originalIframe.src);
-                const iframeDoc = originalIframe.contentWindow.document;
-                
-                // 对 iframe 的 body 进行截图
-                const canvas = await html2canvas(iframeDoc.body, {
-                    // 传递一些关键选项，确保一致性
-                    scale: config.html2canvasOptions.scale,
-                    useCORS: true,
-                    allowTaint: true,
-                    backgroundColor: window.getComputedStyle(iframeDoc.body).backgroundColor,
-                    // 避免在 iframe 内部再次触发无限递归
-                    foreignObjectRendering: false, 
-                });
-                
-                const imgDataUrl = canvas.toDataURL('image/png');
-                
-                // 创建一个 img 元素来替换 iframe
-                const img = document.createElement('img');
-                img.src = imgDataUrl;
-                img.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
-                img.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
-                img.style.border = 'none'; // 确保替换后的图片没有多余的边框
-
-                // 在克隆的 DOM 中替换 iframe
-                if (iframe.parentNode) {
-                    iframe.parentNode.replaceChild(img, iframe);
-                }
-            } else {
-                console.warn(`${PLUGIN_NAME}: 发现跨源 iframe，无法截图，将保留为空白`, originalIframe.src);
-                // 对于跨源 iframe，可以创建一个占位符
-                const placeholder = document.createElement('div');
-                placeholder.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
-                placeholder.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
-                placeholder.style.border = '1px dashed #999';
-                placeholder.style.backgroundColor = '#f0f0f0';
-                placeholder.style.display = 'flex';
-                placeholder.style.alignItems = 'center';
-                placeholder.style.justifyContent = 'center';
-                placeholder.style.fontSize = '12px';
-                placeholder.style.color = '#666';
-                placeholder.textContent = '跨源内容无法截取';
-                if (iframe.parentNode) {
-                    iframe.parentNode.replaceChild(placeholder, iframe);
-                }
-            }
-        } catch (error) {
-            console.error(`${PLUGIN_NAME}: 处理 iframe 时出错:`, error, originalIframe.src);
-            // 出错时也替换为占位符
-             const errorPlaceholder = document.createElement('div');
-             errorPlaceholder.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
-             errorPlaceholder.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
-             errorPlaceholder.style.border = '1px dashed red';
-             errorPlaceholder.textContent = 'Iframe 渲染错误';
-             if (iframe.parentNode) {
-                 iframe.parentNode.replaceChild(errorPlaceholder, iframe);
-             }
+        if (!originalIframe) {
+            console.warn(`[${PLUGIN_NAME}] 找不到与克隆的iframe匹配的原始iframe，跳过。`);
+            return resolve(); // 跳过这个iframe
         }
-    });
 
+        // 设置一个超时，防止iframe因某些原因永远不加载
+        const timeoutId = setTimeout(() => {
+            console.error(`[${PLUGIN_NAME}] 处理iframe超时:`, originalIframe.src);
+            reject(new Error(`Iframe loading timed out for ${originalIframe.src}`));
+        }, 8000); // 8秒超时
+
+        const processIframe = async () => {
+            clearTimeout(timeoutId); // 清除超时计时器
+            try {
+                const iframeWin = originalIframe.contentWindow;
+                if (!iframeWin || !iframeWin.document) {
+                    console.warn(`[${PLUGIN_NAME}] 无法访问iframe的contentWindow，可能是跨域问题。`);
+                    // 创建一个占位符
+                    const placeholder = document.createElement('div');
+                    placeholder.style.width = `${originalIframe.clientWidth}px`;
+                    placeholder.style.height = `${originalIframe.clientHeight}px`;
+                    placeholder.style.border = '1px dashed #999';
+                    placeholder.textContent = '跨域或无法访问的内容';
+                    if (iframe.parentNode) iframe.parentNode.replaceChild(placeholder, iframe);
+                    return resolve();
+                }
+
+                const iframeDoc = iframeWin.document;
+                const iframeBody = iframeDoc.body;
+                const iframeHtml = iframeDoc.documentElement;
+
+                // *** 核心逻辑与之前相同，但在加载完成后执行 ***
+                
+                // 1. 保存原始样式
+                const originalStyles = {
+                    body: { height: iframeBody.style.height, overflow: iframeBody.style.overflow },
+                    html: { height: iframeHtml.style.height, overflow: iframeHtml.style.overflow }
+                };
+
+                // 2. 临时修改样式以准备测量
+                iframeBody.style.height = 'auto';
+                iframeBody.style.overflow = 'visible';
+                iframeHtml.style.height = 'auto';
+                iframeHtml.style.overflow = 'visible';
+                await new Promise(res => setTimeout(res, 100)); // 等待UI重排
+
+                // 3. 精确测量内容的完整滚动高度
+                const contentWidth = Math.max(iframeBody.scrollWidth, iframeHtml.scrollWidth, originalIframe.clientWidth);
+                const contentHeight = Math.max(iframeBody.scrollHeight, iframeHtml.scrollHeight);
+                const viewportWidth = originalIframe.clientWidth;
+
+                if (contentHeight <= 0) {
+                    console.warn(`[${PLUGIN_NAME}] Iframe 内容高度为0，跳过渲染。`);
+                    Object.assign(iframeBody.style, originalStyles.body); // 恢复样式
+                    Object.assign(iframeHtml.style, originalStyles.html);
+                    return resolve();
+                }
+                
+                // 4. 使用 html2canvas 渲染
+                const canvas = await html2canvas(iframeBody, {
+                    ...config.html2canvasOptions,
+                    width: contentWidth,
+                    height: contentHeight,
+                    windowWidth: contentWidth,
+                    windowHeight: contentHeight,
+                    scrollX: 0,
+                    scrollY: 0,
+                    onclone: (clonedDoc) => {
+                        const clonedHtml = clonedDoc.documentElement;
+                        const clonedBody = clonedDoc.body;
+                        clonedHtml.style.height = `${contentHeight}px`;
+                        clonedHtml.style.overflow = 'visible';
+                        clonedBody.style.height = `${contentHeight}px`;
+                        clonedBody.style.overflow = 'visible';
+                        clonedBody.style.position = 'static';
+                    }
+                });
+
+                // 5. 恢复原始 iframe 的样式
+                Object.assign(iframeBody.style, originalStyles.body);
+                Object.assign(iframeHtml.style, originalStyles.html);
+
+                // 6. 创建并替换为图片
+                const img = document.createElement('img');
+                img.src = canvas.toDataURL('image/png');
+                img.style.width = `${viewportWidth}px`;
+                img.style.height = 'auto'; // 高度自适应，保持比例
+                img.style.display = 'block';
+                if (iframe.parentNode) iframe.parentNode.replaceChild(img, iframe);
+
+                resolve(); // 这个iframe处理完成
+
+            } catch (error) {
+                console.error(`${PLUGIN_NAME}: 处理iframe时发生内部错误`, error);
+                reject(error);
+            }
+        };
+
+        // ** 关键改动：检查iframe是否已加载完成 **
+        if (originalIframe.contentWindow.document.readyState === 'complete') {
+            // 如果已经加载完了，直接处理
+            console.log(`[${PLUGIN_NAME}] Iframe已加载，直接处理。`);
+            await processIframe();
+        } else {
+            // 否则，添加 'load' 事件监听器
+            console.log(`[${PLUGIN_NAME}] Iframe未加载，等待 'load' 事件...`);
+            originalIframe.addEventListener('load', processIframe, { once: true });
+        }
+    }));
+
+    // 等待所有的 iframe 都处理完毕
     await Promise.all(promises);
 }
+
 // *** NEW FUNCTION END ***
 
 // 核心截图函数：创建一个临时容器，放入净化后的元素，然后渲染容器
 async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = {}) {
-    console.log('Preparing to capture element with html2canvas-pro v5:', elementToCapture);
+    console.log('启动最终截图流程 (平铺+裁剪):', elementToCapture);
     
-    // 条件性创建遮罩层
     let overlay = null;
     if (config.debugOverlay) {
-        overlay = createOverlay('使用 html2canvas-pro 准备截图...');
+        overlay = createOverlay('启动截图流程...');
         document.body.appendChild(overlay);
     }
     
-    const topSettingsHolder = document.querySelector("#top-settings-holder");
-    const formSheld = document.querySelector("#form_sheld");
-    const elementsToHide = [topSettingsHolder, formSheld, overlay].filter(el => el);
+    const elementsToHide = [document.querySelector("#top-settings-holder"), document.querySelector("#form_sheld")].filter(el => el);
     const originalDisplays = new Map();
-    let dataUrl = null;
+    elementsToHide.forEach(el => {
+        originalDisplays.set(el, el.style.display);
+        el.style.display = 'none';
+    });
 
+    // 1. 准备内容和尺寸计算
+    if (overlay) updateOverlay(overlay, '准备内容和计算尺寸...', 0.05);
+    const preparedElement = prepareSingleElementForHtml2CanvasPro(elementToCapture);
+    if (!preparedElement) throw new Error("无法准备截图元素");
+    
+    // 关键：将净化后的元素临时添加到DOM中，以便精确测量其尺寸
+    const measurementContainer = document.createElement('div');
+    measurementContainer.style.position = 'absolute';
+    measurementContainer.style.left = '-9999px';
+    measurementContainer.style.opacity = '0';
+    measurementContainer.appendChild(preparedElement);
+    document.body.appendChild(measurementContainer);
+    const contentWidth = preparedElement.offsetWidth;
+    const contentHeight = preparedElement.offsetHeight;
+    document.body.removeChild(measurementContainer); // 测量后立即移除
+
+    console.log('DEBUG: 内容测量', {
+        elementToCapture: elementToCapture.tagName + (elementToCapture.className ? '.' + elementToCapture.className.replace(/\s+/g, '.') : ''),
+        preparedElement: preparedElement.tagName + (preparedElement.className ? '.' + preparedElement.className.replace(/\s+/g, '.') : ''),
+        contentWidth,
+        contentHeight,
+        aspectRatio: contentWidth / contentHeight
+    });
+    
+    if (contentWidth === 0 || contentHeight === 0) throw new Error("无法测量消息内容尺寸。");
+    
+    // 2. 准备渲染容器和背景
+    if (overlay) updateOverlay(overlay, '获取并构建背景...', 0.15);
+    const background = await getDynamicBackground(elementToCapture);
+    
+    // 渲染容器将包含所有图层
     const tempContainer = document.createElement('div');
     tempContainer.style.position = 'absolute';
-    tempContainer.style.left = '-9999px';
-    tempContainer.style.top = '-9999px';
-    tempContainer.style.padding = '10px';
+    tempContainer.style.left = '-9999px'; // 保持在屏幕外
+    tempContainer.style.top = '0'; // 确保在视口内
+    tempContainer.style.width = `${contentWidth + 20}px`;
+    tempContainer.style.height = `${contentHeight + 20}px`;
+    tempContainer.style.overflow = 'visible'; // 改为visible，确保内容不被裁剪
+    tempContainer.style.backgroundColor = background.color; // 确保背景色应用
+    tempContainer.style.zIndex = '-9999'; // 确保在底层
+    tempContainer.style.opacity = '1'; // 确保完全不透明
+    // 添加调试输出
+    console.log('DEBUG: 创建临时容器');
+    console.log('测量的内容尺寸 - contentWidth:', contentWidth, 'contentHeight:', contentHeight);
+    console.log('设置的容器尺寸 - width:', contentWidth + 20, 'height:', contentHeight + 20);
 
-    // --- 健壮性检查并获取聊天容器用于确定宽度和背景 ---
-    const chatSelector = config.chatContentSelector;
-    let chatContentEl = null;
-    if (typeof chatSelector === 'string' && chatSelector) {
-       chatContentEl = document.querySelector(chatSelector);
-    } else {
-       console.warn("config.chatContentSelector is invalid:", chatSelector, ". Cannot find chat container for width/background.");
-    }
-    // --- End 健壮性检查 ---
+    // 2.1 创建颜色叠加层 (中间层)
+    const colorOverlayDiv = document.createElement('div');
+    Object.assign(colorOverlayDiv.style, {
+        position: 'absolute', top: '0', left: '0',
+        width: '100%', height: '100%',
+        backgroundColor: background.color, zIndex: '2'
+    });
+    tempContainer.appendChild(colorOverlayDiv);
 
-    let containerWidth = 'auto';
-    if (chatContentEl) {
-        containerWidth = chatContentEl.clientWidth + 'px';
-    } else if (elementToCapture) {
-        containerWidth = elementToCapture.offsetWidth + 'px';
-    }
-    tempContainer.style.width = containerWidth;
+    // 2.2 创建背景图层 (最底层) - 实现平铺逻辑
+    if (background.imageInfo) {
+        const bgInfo = background.imageInfo;
+        const bgContainer = document.createElement('div');
+        Object.assign(bgContainer.style, bgInfo.styles, {
+            position: 'absolute', top: '0', left: '0',
+            width: '100%', height: '100%', zIndex: '1'
+        });
 
-    let chatBgColor = '#1e1e1e';
-    if(chatContentEl) {
-        const chatStyle = window.getComputedStyle(chatContentEl);
-        if (chatStyle.backgroundColor && chatStyle.backgroundColor !== 'rgba(0, 0, 0, 0)' && chatStyle.backgroundColor !== 'transparent') {
-            chatBgColor = chatStyle.backgroundColor;
-        } else {
-             const bodyBgVar = getComputedStyle(document.body).getPropertyValue('--pcb');
-             if (bodyBgVar && bodyBgVar.trim() !== '') {
-                 chatBgColor = bodyBgVar.trim();
-             }
-        }
-    }
-    tempContainer.style.backgroundColor = chatBgColor;
-
-
-    let preparedElement;
-    try {
-        if (overlay) updateOverlay(overlay, '准备元素结构...', 0.05);
-        preparedElement = prepareSingleElementForHtml2CanvasPro(elementToCapture);
-        if (!preparedElement) throw new Error("Failed to prepare element for capture.");
-
-        tempContainer.appendChild(preparedElement);
-        document.body.appendChild(tempContainer);
-
-        // *** MODIFICATION START: Handle iframes before capture ***
-        if (overlay) updateOverlay(overlay, '正在处理内联框架(iframe)...', 0.15);
-        await handleIframesAsync(preparedElement, elementToCapture.ownerDocument);
-        // *** MODIFICATION END ***
-
-        // 只有当有设置延迟时才等待
-        if (config.screenshotDelay > 0) {
-            await new Promise(resolve => setTimeout(resolve, config.screenshotDelay));
-        }
-
-    } catch (e) {
-        console.error("Error during element preparation (pro v5):", e);
-        if (overlay && document.body.contains(overlay)) {
-             if (originalDisplays.has(overlay)) overlay.style.display = originalDisplays.get(overlay) || 'flex';
-             updateOverlay(overlay, `净化错误: ${e.message.substring(0, 60)}...`, 0);
-        }
-        if (tempContainer && tempContainer.parentElement === document.body) {
-           document.body.removeChild(tempContainer);
-        }
-        throw e;
-    }
-
-    try {
-        if (overlay) updateOverlay(overlay, '正在渲染...', 0.3);
-        
-        const finalH2cOptions = {...config.html2canvasOptions, ...h2cUserOptions};
-        finalH2cOptions.ignoreElements = (element) => {
-            // 已有的忽略条件
-            if (element.id === 'top-settings-holder' || 
-                element.id === 'form_sheld' || 
-                element.classList.contains('st-capture-overlay')) {
-                return true;
-            }
+        // 智能平铺逻辑
+        if (bgInfo.originalHeight > 0 && (contentHeight + 20) > bgInfo.originalHeight) {
+            console.log('内容高度超出背景，启用背景平铺。');
+            bgContainer.style.backgroundImage = 'none'; // 禁用默认背景
             
-            // 添加新的忽略条件 - 使用类组合更可靠
-            if (element.classList && 
-                element.classList.contains('flex-container') && 
-                element.classList.contains('swipeRightBlock') && 
-                element.classList.contains('flexFlowColumn') && 
-                element.classList.contains('flexNoGap')) {
-                return true;
+            const neededTiles = Math.ceil((contentHeight + 20) / bgInfo.originalHeight);
+            for (let i = 0; i < neededTiles; i++) {
+                const tile = document.createElement('div');
+                Object.assign(tile.style, {
+                    position: 'absolute',
+                    left: '0',
+                    top: `${i * bgInfo.originalHeight}px`,
+                    width: '100%',
+                    height: `${bgInfo.originalHeight}px`,
+                    backgroundImage: `url("${bgInfo.url}")`,
+                    backgroundSize: bgInfo.styles.backgroundSize,
+                    backgroundRepeat: 'no-repeat', // 每个瓦片不重复
+                    // 我们只在Y轴平铺，所以X轴位置继承原始计算
+                    backgroundPosition: `${bgInfo.styles.backgroundPosition.split(' ')[0]} 0px`,
+                });
+                bgContainer.appendChild(tile);
             }
-            
-            // 新增: 更精确地忽略表情框相关元素
-            try {
-                // 检查是否是聊天区域内的表情元素
-                if (element.closest('#chat')) {
-                    // 检查元素是否匹配特定结构
-                    const isEmotionElement = 
-                        // 检查是否是div[4]/div[1]/div[2]结构
-                        (element.parentElement && 
-                         element.parentElement.parentElement && 
-                         element.parentElement.parentElement.matches('div[class*="mes"] > div[class*="mes_block"] > div')) ||
-                        // 或者检查元素是否是表情容器
-                        element.matches('.expression_box, .expression-container, [data-emotion]') ||
-                        // 或者检查元素是否包含表情相关内容
-                        (element.querySelector && element.querySelector('.expression_box, .expression-container, [data-emotion]'));
-                        
-                    if (isEmotionElement) {
-                        return true;
-                    }
+        }
+        tempContainer.appendChild(bgContainer);
+    }
+
+    // 2.3 创建内容层 (最顶层)
+    const contentDiv = document.createElement('div');
+    Object.assign(contentDiv.style, {
+        position: 'relative', 
+        zIndex: '3', 
+        padding: '10px',
+        display: 'block',
+        width: '100%',
+        height: 'auto',
+        overflow: 'visible'
+    });
+    // 使用我们之前测量时创建的、已净化和渲染的元素
+    contentDiv.appendChild(preparedElement);
+    tempContainer.appendChild(contentDiv);
+    
+    document.body.appendChild(tempContainer);
+
+    // 给浏览器时间来渲染tempContainer的内容
+    console.log('DEBUG: 等待临时容器渲染...');
+    await new Promise(resolve => setTimeout(resolve, Math.max(100, config.screenshotDelay)));
+    console.log('DEBUG: 临时容器渲染等待完成');
+
+    let finalDataUrl = null;
+
+    try {
+        // 3. 第一阶段：超量渲染
+        if (overlay) updateOverlay(overlay, '阶段1: 渲染完整场景...', 0.3);
+        console.log('DEBUG: html2canvas配置', {
+            ...config.html2canvasOptions,
+            backgroundColor: null
+        });
+        const rawCanvas = await html2canvas(tempContainer, {
+            ...config.html2canvasOptions,
+            backgroundColor: null,
+            logging: true, // 临时启用日志以便调试
+            onclone: function(documentClone) {
+                // 检查克隆文档中的元素
+                const clonedContainer = documentClone.querySelector('body > div'); // 应该是我们的tempContainer
+                if (clonedContainer) {
+                    console.log('DEBUG: 克隆文档中的容器', {
+                        width: clonedContainer.offsetWidth,
+                        height: clonedContainer.offsetHeight,
+                        childrenCount: clonedContainer.children.length,
+                        innerHTML: clonedContainer.innerHTML.substring(0, 100) + '...' // 只显示前100个字符
+                    });
+                } else {
+                    console.error('DEBUG: 克隆文档中未找到容器!');
                 }
-            } catch (e) {
-                // 忽略可能的错误
-                console.debug('Expression element check error:', e);
             }
-            
-            return false;
-        };
+        });
 
-        console.log('h2c opts:', finalH2cOptions);
+        // 输出原始画布的像素数据，检查是否为空
+        const rawCtx = rawCanvas.getContext('2d');
+        const rawImageData = rawCtx.getImageData(0, 0, rawCanvas.width, rawCanvas.height);
+        const hasNonTransparentPixels = Array.from(rawImageData.data).some((value, index) => index % 4 === 3 && value > 0);
+        console.log('DEBUG: 原始画布数据检查', {
+            width: rawCanvas.width,
+            height: rawCanvas.height,
+            hasContent: hasNonTransparentPixels,
+            samplePixels: Array.from(rawImageData.data.slice(0, 40))
+        });
 
-        // 使用临时容器进行渲染，确保清理后的DOM结构
-        const canvas = await html2canvas(tempContainer, finalH2cOptions);
+        // 4. 第二阶段：精确裁剪
+        if (overlay) updateOverlay(overlay, '阶段2: 精确裁剪内容...', 0.8);
+        const finalCanvas = document.createElement('canvas');
+        const ctx = finalCanvas.getContext('2d');
+
+        // 1. 记录 tempContainer 的实际宽高
+        const containerWidth = tempContainer.offsetWidth;
+        const containerHeight = tempContainer.offsetHeight;
+
+        // 2. 计算 scale
+        const scale = rawCanvas.width / containerWidth;
+
+        // 3. 计算内容区域（去掉padding）
+        const padding = 10; // 你加的padding
+        const actualContentWidth = containerWidth - 2 * padding;
+        const actualContentHeight = containerHeight - 2 * padding;
+
+        // 4. 最终画布的尺寸
+        finalCanvas.width = actualContentWidth * scale;
+        finalCanvas.height = actualContentHeight * scale;
+
+        // 调试输出
+        console.log('DEBUG: 裁剪参数', {
+            containerWidth, containerHeight,
+            scale,
+            padding,
+            actualContentWidth, actualContentHeight,
+            finalCanvasWidth: finalCanvas.width,
+            finalCanvasHeight: finalCanvas.height,
+            sourceX: padding * scale,
+            sourceY: padding * scale,
+            sourceWidth: actualContentWidth * scale,
+            sourceHeight: actualContentHeight * scale
+        });
+
+        // 5. 精确裁剪
+        ctx.drawImage(
+            rawCanvas,
+            padding * scale, // 源X: padding
+            padding * scale, // 源Y: padding
+            actualContentWidth * scale, // 源宽度: 精确内容宽度
+            actualContentHeight * scale, // 源高度: 精确内容高度
+            0, 0, // 目标X,Y
+            finalCanvas.width, // 目标宽度
+            finalCanvas.height // 目标高度
+        );
+
+        // 检查最终画布是否有内容
+        const finalImageData = ctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+        const finalHasContent = Array.from(finalImageData.data).some((value, index) => index % 4 === 3 && value > 0);
+        console.log('DEBUG: 最终画布内容检查', {
+            hasContent: finalHasContent,
+            samplePixels: Array.from(finalImageData.data.slice(0, 40))
+        });
         
-        if (overlay) updateOverlay(overlay, '生成图像数据...', 0.8);
-        dataUrl = canvas.toDataURL('image/png');
+        finalDataUrl = finalCanvas.toDataURL('image/png');
 
     } catch (error) {
-        console.error('html2canvas-pro 截图失败:', error.stack || error);
-        if (overlay && document.body.contains(overlay)) {
-             const errorMsg = error && error.message ? error.message : "未知渲染错误";
-             if (originalDisplays.has(overlay)) overlay.style.display = originalDisplays.get(overlay) || 'flex';
-             updateOverlay(overlay, `渲染错误 (pro v5): ${errorMsg.substring(0, 60)}...`, 0);
-        }
+        console.error('截图流程失败:', error.stack || error);
+        if (overlay) updateOverlay(overlay, `渲染错误: ${error.message.substring(0, 60)}...`, 0);
         throw error;
     } finally {
-        if (tempContainer && tempContainer.parentElement === document.body) {
-           document.body.removeChild(tempContainer);
-        }
-        if (overlay && document.body.contains(overlay)) {
-            if (!dataUrl) {
-                setTimeout(() => { if(document.body.contains(overlay)) document.body.removeChild(overlay); }, 3000);
-            } else {
-               if (originalDisplays.has(overlay)) overlay.style.display = originalDisplays.get(overlay) || 'flex';
-               updateOverlay(overlay, '截图完成!', 1);
-               setTimeout(() => { if(document.body.contains(overlay)) document.body.removeChild(overlay); }, 1200);
-            }
+        // 5. 清理
+        if (tempContainer?.parentElement) tempContainer.parentElement.removeChild(tempContainer);
+        elementsToHide.forEach(el => {
+            if (originalDisplays.has(el)) el.style.display = originalDisplays.get(el);
+        });
+        if (overlay?.parentElement) {
+            const delay = finalDataUrl ? 1200 : 3000;
+            const message = finalDataUrl ? '截图完成!' : '截图失败!';
+            updateOverlay(overlay, message, finalDataUrl ? 1 : 0);
+            setTimeout(() => { if (overlay.parentElement) overlay.parentElement.removeChild(overlay) }, delay);
         }
     }
-    if (!dataUrl) throw new Error("html2canvas-pro 未能生成图像数据。");
-    console.log("DEBUG: html2canvas-pro capture successful.");
-    return dataUrl;
+    
+    if (!finalDataUrl) throw new Error("截图流程未能生成最终图像数据。");
+    return finalDataUrl;
+}
+
+// 添加同步函数（与prepareSingleElementForHtml2CanvasPro中的相同）
+function syncDetailsState(origNode, cloneNode) {
+    if (origNode.tagName === 'DETAILS') {
+        cloneNode.open = origNode.open;
+    }
+    
+    const origChildren = origNode.children;
+    const cloneChildren = cloneNode.children;
+    
+    if (origChildren.length === cloneChildren.length) {
+        for (let i = 0; i < origChildren.length; i++) {
+            syncDetailsState(origChildren[i], cloneChildren[i]);
+        }
+    }
 }
 
 // This function is specifically for capturing multiple messages (or the whole conversation)
@@ -800,7 +1049,9 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
              }
         }
     }
+    // 透明背景
     tempContainer.style.backgroundColor = chatBgColor;
+    
 
 
     updateOverlay(overlay, `准备 ${messagesToCapture.length} 条消息 (pro v5)...`, 0.05);
