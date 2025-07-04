@@ -1635,51 +1635,6 @@ function updateOverlay(overlay, message, progressRatio) {
     if (progressBar) progressBar.style.width = `${Math.round(safeProgress * 100)}%`;
 }
 
-好的，我仔细分析了两个版本的 index.js 文件中关于 showSettingsPopup 函数的实现，找到了导致 html2canvas-pro 插件弹窗位置不正确的原因。
-问题根源分析
-问题的核心在于 CSS定位和Flexbox布局的混合使用不当。
-dom-to-image-more (正常显示) 的实现方式：
-父容器 (Overlay):
-Generated javascript
-Object.assign(overlay.style, { 
-    display: 'flex', 
-    justifyContent: 'center', 
-    alignItems:'flex-start' // 关键点1: 垂直对齐方式为“顶部对齐”
-});
-Use code with caution.
-JavaScript
-子元素 (Popup):
-Generated javascript
-Object.assign(popup.style, { 
-    // ...其他样式...
-    marginTop: '30vh', // 关键点2: 使用 margin-top 将弹窗从顶部推下来
-    // 注意：这里没有使用 position: 'absolute'
-});
-Use code with caution.
-JavaScript
-逻辑解释： 这种方法非常清晰。父容器是一个flex布局，它让子元素（弹窗）在垂直方向上从顶部开始排列 (align-items: flex-start)。然后，通过给弹窗自身一个 30vh 的上边距，精确地把它推到视口下方30%的位置。这种方式布局稳定且可预测。
-html2canvas-pro (显示异常) 的实现方式：
-父容器 (Overlay):
-Generated javascript
-overlay.style.display = 'flex';
-overlay.style.justifyContent = 'center';
-overlay.style.alignItems = 'center'; // 关键点1: 垂直对齐方式为“居中对齐”
-Use code with caution.
-JavaScript
-子元素 (Popup):
-Generated javascript
-popup.style.position = 'absolute'; // 关键点2: 将弹窗设置为了绝对定位
-popup.style.cursor = 'move'; // (为拖拽功能服务)
-Use code with caution.
-JavaScript
-逻辑解释： 这是问题所在。当一个flex容器的子元素被设置为 position: absolute 时，它会脱离flex布局的常规文档流。虽然父容器设置了 align-items: center，但它对这个脱离文档流的绝对定位元素的影响变得不可靠。
-浏览器的实际渲染行为是：它会尝试将这个绝对定位元素的 上边沿 对齐到父容器的垂直中心线。因为你的弹窗有 maxHeight: '80vh'，它非常高，导致弹窗的上半部分被放置在了屏幕中心线的上方，自然就跑出屏幕顶端了。
-解决方案
-要修复这个问题，你需要将 html2canvas-pro 插件的 showSettingsPopup 函数修改得和 dom-to-image-more 的实现方式类似。这不仅能解决定位问题，还能简化代码。
-请打开 html2canvas-pro 插件的 index.js 文件，找到 showSettingsPopup 函数，并将其中的代码替换为以下修正后的版本：
-文件: public/extensions/third-party/sillytavern-screenshot-h2c-pro/index.js
-Generated javascript
-// 新增一个自定义设置弹窗
 function showSettingsPopup() {
     // 获取当前设置
     const settings = getPluginSettings();
