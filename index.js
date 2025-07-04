@@ -121,7 +121,6 @@ async function loadScript(src) {
     });
 }
 
-// ### MODIFICATION 1 of 3: Force background to repeat vertically to fill any height ###
 async function getDynamicBackground(elementForContext) {
     const chatContainer = document.querySelector(config.chatContentSelector);
     if (!chatContainer) {
@@ -168,7 +167,6 @@ async function getDynamicBackground(elementForContext) {
                 styles: {
                     backgroundImage: computedBgStyle.backgroundImage,
                     backgroundSize: computedBgStyle.backgroundSize,
-                    // MODIFICATION: Force vertical repeat to solve background clipping issue.
                     backgroundRepeat: 'repeat-y', 
                     backgroundPosition: `-${offsetX}px -${offsetY}px`,
                 }
@@ -470,6 +468,7 @@ jQuery(async () => {
 });
 
 
+// ### FIX 1 of 3: Remove the red debug border which adds 1px margin ###
 function prepareSingleElementForHtml2CanvasPro(originalElement) {
     if (!originalElement) return null;
 
@@ -548,7 +547,8 @@ function prepareSingleElementForHtml2CanvasPro(originalElement) {
     element.style.height = 'auto';
     element.style.overflow = 'visible';
     
-    element.style.border = '1px solid red';
+    // ### FIX: Removed the debug border that adds unwanted pixels to the screenshot.
+    // element.style.border = '1px solid red';
     
     return element;
 }
@@ -624,9 +624,9 @@ async function handleIframesAsync(clonedElement, originalDocument) {
     await Promise.all(promises);
 }
 
-// ### MODIFICATION 2 of 3 (Part A): Added ignoreElements logic ###
+// ### FIX 2 of 3: Removed container padding and negative offset to perfectly frame the content ###
 async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = {}) {
-    console.log('启动最终截图流程 (已修正并应用偏移):', elementToCapture);
+    console.log('启动最终截图流程:', elementToCapture);
     
     let overlay = null;
     if (config.debugOverlay) {
@@ -647,11 +647,14 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
         const preparedElement = prepareSingleElementForHtml2CanvasPro(elementToCapture);
         if (!preparedElement) throw new Error("无法准备截图元素");
 
+        // ### FIX: Removed the unnecessary negative offset hack.
+        /*
         Object.assign(preparedElement.style, {
             position: 'relative',
             left: '-10px',
             top: '-10px',
         });
+        */
 
         if (overlay) updateOverlay(overlay, '获取并构建背景...', 0.15);
         const background = await getDynamicBackground(elementToCapture);
@@ -661,7 +664,8 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
             left: '-9999px',
             top: '0px',
             width: `${contentWidth}px`,
-            padding: '10px', 
+            // ### FIX: Removed padding to eliminate unwanted margins.
+            padding: '0', 
             backgroundColor: background.color,
             overflow: 'visible',
         });
@@ -680,14 +684,12 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
 
         if (overlay) updateOverlay(overlay, '正在渲染场景...', 0.4);
 
-        // MODIFICATION: Added ignoreElements to skip unwanted UI parts
         const finalCanvas = await html2canvas(tempContainer, {
             ...config.html2canvasOptions,
             backgroundColor: null,
             ignoreElements: (element) => {
                 const classList = element.classList;
                 if (!classList) return false;
-                // Ignore swipe controls and other UI elements
                 if (classList.contains('swipeRightBlock') || 
                     classList.contains('swipe_left') ||
                     classList.contains('st-capture-overlay') ||
@@ -740,7 +742,7 @@ function syncDetailsState(origNode, cloneNode) {
 }
 
 
-// ### MODIFICATION 3 of 3: Unified background logic and added ignore rules ###
+// ### FIX 3 of 3: Removed container padding for multi-message captures as well. ###
 async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionHint, h2cUserOptions = {}) {
     if (!messagesToCapture || messagesToCapture.length === 0) {
         throw new Error("没有提供消息给 captureMultipleMessagesWithHtml2Canvas");
@@ -757,14 +759,14 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
         tempContainer.style.position = 'absolute';
         tempContainer.style.left = '-9999px';
         tempContainer.style.top = '-9999px';
-        tempContainer.style.padding = '10px';
+        // ### FIX: Removed padding to eliminate unwanted margins.
+        tempContainer.style.padding = '0';
         tempContainer.style.overflow = 'visible';
 
         const firstMessage = messagesToCapture[0];
         const containerWidth = firstMessage.offsetWidth + 'px';
         tempContainer.style.width = containerWidth;
         
-        // MODIFICATION: Use getDynamicBackground for consistent background handling
         updateOverlay(overlay, `正在准备背景...`, 0.02);
         const background = await getDynamicBackground(firstMessage);
         tempContainer.style.backgroundColor = background.color;
@@ -796,12 +798,10 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
 
         const finalH2cOptions = {...config.html2canvasOptions, ...h2cUserOptions};
         
-        // MODIFICATION: Add logic to ignore the requested elements
         finalH2cOptions.ignoreElements = (element) => {
             const classList = element.classList;
             if (!classList) return false;
             
-            // Ignore swipe controls and other UI elements
             if (classList.contains('swipeRightBlock') || 
                 classList.contains('swipe_left') ||
                 classList.contains('st-capture-overlay') ||
