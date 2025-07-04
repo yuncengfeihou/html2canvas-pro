@@ -36,8 +36,8 @@ const PLUGIN_NAME = 'html2canvas-pro';
 // 插件的默认设置
 const defaultSettings = {
     screenshotDelay: 10,       // 可以设置更低值，比如 0-20
-    scrollDelay: 10,  
-    autoInstallButtons: true, 
+    scrollDelay: 10,
+    autoInstallButtons: true,
     altButtonLocation: true,
     screenshotScale: 2.0,      // 降低到 1.0 以提高速度
     useForeignObjectRendering: false,
@@ -91,13 +91,13 @@ function loadConfig() {
     } else {
         config.html2canvasOptions.scale = defaultSettings.screenshotScale;
     }
-    
+
     // 添加调试输出
     console.log('DEBUG: html2canvas配置加载', config.html2canvasOptions);
-    
+
     // 应用其他html2canvas设置
     config.html2canvasOptions.foreignObjectRendering = settings.useForeignObjectRendering;
-    config.html2canvasOptions.letterRendering = settings.letterRendering !== undefined ? 
+    config.html2canvasOptions.letterRendering = settings.letterRendering !== undefined ?
         settings.letterRendering : defaultSettings.letterRendering;
     config.html2canvasOptions.imageTimeout = settings.imageTimeout || defaultSettings.imageTimeout;
 
@@ -121,6 +121,7 @@ async function loadScript(src) {
     });
 }
 
+// ### MODIFICATION 1 of 3: Force background to repeat vertically to fill any height ###
 async function getDynamicBackground(elementForContext) {
     const chatContainer = document.querySelector(config.chatContentSelector);
     if (!chatContainer) {
@@ -167,7 +168,8 @@ async function getDynamicBackground(elementForContext) {
                 styles: {
                     backgroundImage: computedBgStyle.backgroundImage,
                     backgroundSize: computedBgStyle.backgroundSize,
-                    backgroundRepeat: computedBgStyle.backgroundRepeat,
+                    // MODIFICATION: Force vertical repeat to solve background clipping issue.
+                    backgroundRepeat: 'repeat-y', 
                     backgroundPosition: `-${offsetX}px -${offsetY}px`,
                 }
             };
@@ -176,6 +178,7 @@ async function getDynamicBackground(elementForContext) {
     
     return { color: backgroundColor, imageInfo: backgroundImageInfo };
 }
+
 
 jQuery(async () => {
     console.log(`${PLUGIN_NAME}: 插件初始化中...`);
@@ -467,7 +470,6 @@ jQuery(async () => {
 });
 
 
-// ### MODIFICATION 1 of 3: 'iframe' is no longer removed from the DOM clone ###
 function prepareSingleElementForHtml2CanvasPro(originalElement) {
     if (!originalElement) return null;
 
@@ -498,7 +500,6 @@ function prepareSingleElementForHtml2CanvasPro(originalElement) {
         });
     });
 
-    // MODIFICATION: 'iframe' is preserved to be handled by the dedicated function.
     element.querySelectorAll('script, style, noscript, canvas').forEach(el => el.remove());
     
     element.querySelectorAll('.mes_reasoning, .mes_reasoning_delete, .mes_reasoning_edit_cancel').forEach(el => {
@@ -552,19 +553,12 @@ function prepareSingleElementForHtml2CanvasPro(originalElement) {
     return element;
 }
 
-// ### MODIFICATION 2 of 3: This function is completely replaced with the advanced "Recursive Render & Replace" strategy ###
-/**
- * Recursively processes iframes within a cloned element by rendering their content to an image and replacing the iframe tag.
- * @param {HTMLElement} clonedElement - The cloned element prepared for screenshotting.
- * @param {Document} originalDocument - The original document object to access iframe's contentWindow.
- */
 async function handleIframesAsync(clonedElement, originalDocument) {
     const iframes = clonedElement.querySelectorAll('iframe');
     if (iframes.length === 0) {
         return;
     }
 
-    // Find the corresponding iframe elements in the original document.
     const originalIframes = Array.from(originalDocument.querySelectorAll('iframe'));
 
     const promises = Array.from(iframes).map(async (iframe, index) => {
@@ -572,38 +566,33 @@ async function handleIframesAsync(clonedElement, originalDocument) {
         if (!originalIframe) return;
 
         try {
-            // Check if the iframe is same-origin and accessible.
             const isSameOrigin = originalIframe.contentWindow && originalIframe.contentWindow.document;
 
             if (isSameOrigin) {
                 console.log(`${PLUGIN_NAME}: Same-origin iframe found, recursively capturing...`, originalIframe.src);
                 const iframeDoc = originalIframe.contentWindow.document;
                 
-                // Capture the iframe's body content.
                 const canvas = await html2canvas(iframeDoc.body, {
                     scale: config.html2canvasOptions.scale,
                     useCORS: true,
                     allowTaint: true,
                     backgroundColor: window.getComputedStyle(iframeDoc.body).backgroundColor,
-                    foreignObjectRendering: false, // Prevent infinite recursion inside iframe
+                    foreignObjectRendering: false, 
                 });
                 
                 const imgDataUrl = canvas.toDataURL('image/png');
                 
-                // Create an img element to replace the iframe.
                 const img = document.createElement('img');
                 img.src = imgDataUrl;
                 img.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
                 img.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
-                img.style.border = 'none'; // Ensure the replacement image has no extra border.
+                img.style.border = 'none';
 
-                // Replace the iframe with the generated image in the cloned DOM.
                 if (iframe.parentNode) {
                     iframe.parentNode.replaceChild(img, iframe);
                 }
             } else {
                 console.warn(`${PLUGIN_NAME}: Cross-origin iframe found, cannot capture. Creating placeholder.`, originalIframe.src);
-                // For cross-origin iframes, create a placeholder.
                 const placeholder = document.createElement('div');
                 placeholder.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
                 placeholder.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
@@ -621,7 +610,6 @@ async function handleIframesAsync(clonedElement, originalDocument) {
             }
         } catch (error) {
             console.error(`${PLUGIN_NAME}: Error processing iframe:`, error, originalIframe.src);
-            // Also replace with a placeholder on error.
              const errorPlaceholder = document.createElement('div');
              errorPlaceholder.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
              errorPlaceholder.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
@@ -636,6 +624,7 @@ async function handleIframesAsync(clonedElement, originalDocument) {
     await Promise.all(promises);
 }
 
+// ### MODIFICATION 2 of 3 (Part A): Added ignoreElements logic ###
 async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = {}) {
     console.log('启动最终截图流程 (已修正并应用偏移):', elementToCapture);
     
@@ -645,13 +634,6 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
         document.body.appendChild(overlay);
     }
     
-    const elementsToHide = [document.querySelector("#top-settings-holder"), document.querySelector("#form_sheld")].filter(el => el);
-    const originalDisplays = new Map();
-    elementsToHide.forEach(el => {
-        originalDisplays.set(el, el.style.display);
-        el.style.display = 'none';
-    });
-
     let finalDataUrl = null;
     const tempContainer = document.createElement('div');
 
@@ -665,13 +647,11 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
         const preparedElement = prepareSingleElementForHtml2CanvasPro(elementToCapture);
         if (!preparedElement) throw new Error("无法准备截图元素");
 
-        // ### 新增修改：在这里对克隆元素应用相对定位和偏移 ###
         Object.assign(preparedElement.style, {
             position: 'relative',
             left: '-10px',
             top: '-10px',
         });
-        // ### 修改结束 ###
 
         if (overlay) updateOverlay(overlay, '获取并构建背景...', 0.15);
         const background = await getDynamicBackground(elementToCapture);
@@ -681,7 +661,7 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
             left: '-9999px',
             top: '0px',
             width: `${contentWidth}px`,
-            padding: '10px', // 保持10px的padding作为基准
+            padding: '10px', 
             backgroundColor: background.color,
             overflow: 'visible',
         });
@@ -691,7 +671,6 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
         }
 
         tempContainer.appendChild(preparedElement);
-
         document.body.appendChild(tempContainer);
 
         if (overlay) updateOverlay(overlay, '正在处理内联框架(iframe)...', 0.25);
@@ -700,9 +679,24 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
         await new Promise(resolve => setTimeout(resolve, Math.max(100, config.screenshotDelay)));
 
         if (overlay) updateOverlay(overlay, '正在渲染场景...', 0.4);
+
+        // MODIFICATION: Added ignoreElements to skip unwanted UI parts
         const finalCanvas = await html2canvas(tempContainer, {
             ...config.html2canvasOptions,
-            backgroundColor: null, 
+            backgroundColor: null,
+            ignoreElements: (element) => {
+                const classList = element.classList;
+                if (!classList) return false;
+                // Ignore swipe controls and other UI elements
+                if (classList.contains('swipeRightBlock') || 
+                    classList.contains('swipe_left') ||
+                    classList.contains('st-capture-overlay') ||
+                    element.id === 'top-settings-holder' ||
+                    element.id === 'form_sheld') {
+                    return true;
+                }
+                return false;
+            },
         });
         
         if (overlay) updateOverlay(overlay, '生成最终图像...', 0.9);
@@ -716,11 +710,6 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
         if (tempContainer.parentElement) {
             tempContainer.parentElement.removeChild(tempContainer);
         }
-        elementsToHide.forEach(el => {
-            if (originalDisplays.has(el)) {
-                el.style.display = originalDisplays.get(el);
-            }
-        });
         if (overlay?.parentElement) {
             const delay = finalDataUrl ? 1200 : 3000;
             const message = finalDataUrl ? '截图完成!' : '截图失败!';
@@ -734,6 +723,7 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
     }
     return finalDataUrl;
 }
+
 function syncDetailsState(origNode, cloneNode) {
     if (origNode.tagName === 'DETAILS') {
         cloneNode.open = origNode.open;
@@ -749,114 +739,75 @@ function syncDetailsState(origNode, cloneNode) {
     }
 }
 
+
+// ### MODIFICATION 3 of 3: Unified background logic and added ignore rules ###
 async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionHint, h2cUserOptions = {}) {
     if (!messagesToCapture || messagesToCapture.length === 0) {
         throw new Error("没有提供消息给 captureMultipleMessagesWithHtml2Canvas");
     }
-    console.log(`[captureMultipleMessagesWithHtml2Canvas-pro v5] Capturing ${messagesToCapture.length} messages. Hint: ${actionHint}`);
+    console.log(`[captureMultipleMessagesWithHtml2Canvas-pro] Capturing ${messagesToCapture.length} messages. Hint: ${actionHint}`);
 
-    const overlay = createOverlay(`组合 ${messagesToCapture.length} 条消息 (pro v5)...`);
+    const overlay = createOverlay(`组合 ${messagesToCapture.length} 条消息...`);
     document.body.appendChild(overlay);
 
-    const topSettingsHolder = document.querySelector("#top-settings-holder");
-    const formSheld = document.querySelector("#form_sheld");
-    const elementsToHide = [topSettingsHolder, formSheld, overlay].filter(el => el);
-    const originalDisplays = new Map();
     let dataUrl = null;
-
     const tempContainer = document.createElement('div');
-    tempContainer.style.position = 'absolute';
-    tempContainer.style.left = '-9999px';
-    tempContainer.style.top = '-9999px';
-    tempContainer.style.padding = '10px';
-
-    const chatSelector = config.chatContentSelector;
-    let chatContentEl = null;
-    if (typeof chatSelector === 'string' && chatSelector) {
-       chatContentEl = document.querySelector(chatSelector);
-    } else {
-       console.warn("config.chatContentSelector is invalid:", chatSelector, ". Cannot find chat container for width/background.");
-    }
-
-    let containerWidth = 'auto';
-    if (chatContentEl) {
-        containerWidth = chatContentEl.clientWidth + 'px';
-    } else if (messagesToCapture.length > 0) {
-        containerWidth = messagesToCapture[0].offsetWidth + 'px';
-    }
-    tempContainer.style.width = containerWidth;
-
-    let chatBgColor = '#1e1e1e';
-    if(chatContentEl) {
-        const chatStyle = window.getComputedStyle(chatContentEl);
-        if (chatStyle.backgroundColor && chatStyle.backgroundColor !== 'rgba(0, 0, 0, 0)' && chatStyle.backgroundColor !== 'transparent') {
-            chatBgColor = chatStyle.backgroundColor;
-        } else {
-             const bodyBgVar = getComputedStyle(document.body).getPropertyValue('--pcb');
-             if (bodyBgVar && bodyBgVar.trim() !== '') {
-                 chatBgColor = bodyBgVar.trim();
-             }
-        }
-    }
-    tempContainer.style.backgroundColor = chatBgColor;
-    
-    updateOverlay(overlay, `准备 ${messagesToCapture.length} 条消息 (pro v5)...`, 0.05);
-    messagesToCapture.forEach(msg => {
-        try {
-            const preparedClone = prepareSingleElementForHtml2CanvasPro(msg);
-            if (preparedClone) {
-                tempContainer.appendChild(preparedClone);
-            } else {
-                 console.warn("Skipping null prepared clone for message:", msg);
-            }
-        } catch (e) {
-            console.error("Error preparing message for multi-capture (pro v5):", msg, e);
-        }
-    });
-    document.body.appendChild(tempContainer);
-    
-    // ### MODIFICATION 3 of 3 (Part B): Call handleIframesAsync before capturing multiple messages ###
-    if (overlay) updateOverlay(overlay, '正在处理所有内联框架(iframe)...', 0.15);
-    if (messagesToCapture.length > 0) {
-        await handleIframesAsync(tempContainer, messagesToCapture[0].ownerDocument);
-    }
-    
-    await new Promise(resolve => setTimeout(resolve, config.screenshotDelay));
 
     try {
+        tempContainer.style.position = 'absolute';
+        tempContainer.style.left = '-9999px';
+        tempContainer.style.top = '-9999px';
+        tempContainer.style.padding = '10px';
+        tempContainer.style.overflow = 'visible';
+
+        const firstMessage = messagesToCapture[0];
+        const containerWidth = firstMessage.offsetWidth + 'px';
+        tempContainer.style.width = containerWidth;
+        
+        // MODIFICATION: Use getDynamicBackground for consistent background handling
+        updateOverlay(overlay, `正在准备背景...`, 0.02);
+        const background = await getDynamicBackground(firstMessage);
+        tempContainer.style.backgroundColor = background.color;
+        if (background.imageInfo) {
+            Object.assign(tempContainer.style, background.imageInfo.styles);
+        }
+
+        updateOverlay(overlay, `准备 ${messagesToCapture.length} 条消息...`, 0.05);
+        messagesToCapture.forEach(msg => {
+            try {
+                const preparedClone = prepareSingleElementForHtml2CanvasPro(msg);
+                if (preparedClone) {
+                    tempContainer.appendChild(preparedClone);
+                } else {
+                     console.warn("Skipping null prepared clone for message:", msg);
+                }
+            } catch (e) {
+                console.error("Error preparing message for multi-capture:", msg, e);
+            }
+        });
+        document.body.appendChild(tempContainer);
+        
+        if (overlay) updateOverlay(overlay, '正在处理所有内联框架(iframe)...', 0.15);
+        await handleIframesAsync(tempContainer, firstMessage.ownerDocument);
+        
+        await new Promise(resolve => setTimeout(resolve, config.screenshotDelay));
+
         updateOverlay(overlay, '正在渲染…', 0.3);
 
         const finalH2cOptions = {...config.html2canvasOptions, ...h2cUserOptions};
+        
+        // MODIFICATION: Add logic to ignore the requested elements
         finalH2cOptions.ignoreElements = (element) => {
-            if (element.id === 'top-settings-holder' || 
-                element.id === 'form_sheld' || 
-                element.classList.contains('st-capture-overlay')) {
-                return true;
-            }
+            const classList = element.classList;
+            if (!classList) return false;
             
-            if (element.classList && 
-                element.classList.contains('flex-container') && 
-                element.classList.contains('swipeRightBlock') && 
-                element.classList.contains('flexFlowColumn') && 
-                element.classList.contains('flexNoGap')) {
+            // Ignore swipe controls and other UI elements
+            if (classList.contains('swipeRightBlock') || 
+                classList.contains('swipe_left') ||
+                classList.contains('st-capture-overlay') ||
+                element.id === 'top-settings-holder' ||
+                element.id === 'form_sheld') {
                 return true;
-            }
-            
-            try {
-                if (element.closest('#chat')) {
-                    const isEmotionElement = 
-                        (element.parentElement && 
-                         element.parentElement.parentElement && 
-                         element.parentElement.parentElement.matches('div[class*="mes"] > div[class*="mes_block"] > div')) ||
-                        element.matches('.expression_box, .expression-container, [data-emotion]') ||
-                        (element.querySelector && element.querySelector('.expression_box, .expression-container, [data-emotion]'));
-                        
-                    if (isEmotionElement) {
-                        return true;
-                    }
-                }
-            } catch (e) {
-                console.debug('Expression element check error:', e);
             }
             
             return false;
@@ -872,22 +823,16 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
         console.error('html2canvas-pro 多消息截图失败:', error.stack || error);
          if (overlay && document.body.contains(overlay)) {
              const errorMsg = error && error.message ? error.message : "未知渲染错误";
-             if (originalDisplays.has(overlay)) overlay.style.display = originalDisplays.get(overlay) || 'flex';
-             updateOverlay(overlay, `多消息渲染错误 (pro v5): ${errorMsg.substring(0,50)}...`, 0);
+             updateOverlay(overlay, `多消息渲染错误: ${errorMsg.substring(0,50)}...`, 0);
         }
         throw error;
     } finally {
-        if (tempContainer && tempContainer.parentElement === document.body) {
+        if (tempContainer?.parentElement) {
             document.body.removeChild(tempContainer);
         }
-        if (overlay && document.body.contains(overlay)) {
-            if (!dataUrl) {
-                 setTimeout(() => {if(document.body.contains(overlay)) document.body.removeChild(overlay);}, 3000);
-            } else {
-                if (originalDisplays.has(overlay)) overlay.style.display = originalDisplays.get(overlay) || 'flex';
-                updateOverlay(overlay, '截图完成!', 1);
-                setTimeout(() => {if(document.body.contains(overlay)) document.body.removeChild(overlay);}, 1200);
-            }
+        if (overlay?.parentElement) {
+            updateOverlay(overlay, dataUrl ? '截图完成!' : '截图失败!', dataUrl ? 1 : 0);
+            setTimeout(() => { if (overlay.parentElement) document.body.removeChild(overlay); }, 1500);
         }
     }
     if (!dataUrl) throw new Error("html2canvas-pro 未能生成多消息图像数据。");
