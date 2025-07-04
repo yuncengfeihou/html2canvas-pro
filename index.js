@@ -121,7 +121,6 @@ async function loadScript(src) {
     });
 }
 
-// --- START: NEW HELPER FUNCTION ---
 async function getDynamicBackground(elementForContext) {
     const chatContainer = document.querySelector(config.chatContentSelector);
     if (!chatContainer) {
@@ -130,7 +129,6 @@ async function getDynamicBackground(elementForContext) {
 
     const computedChatStyle = window.getComputedStyle(chatContainer);
     
-    // 1. 获取 #chat 的背景颜色
     let backgroundColor = '#1e1e1e'; // Fallback
     if (computedChatStyle.backgroundColor && computedChatStyle.backgroundColor !== 'rgba(0, 0, 0, 0)' && computedChatStyle.backgroundColor !== 'transparent') {
         backgroundColor = computedChatStyle.backgroundColor;
@@ -141,23 +139,20 @@ async function getDynamicBackground(elementForContext) {
         }
     }
     
-    // 2. 尝试获取背景图片
     const bgElement = document.querySelector('#bg1, #bg2') || chatContainer;
     const computedBgStyle = window.getComputedStyle(bgElement);
     
     let backgroundImageInfo = null;
     if (computedBgStyle.backgroundImage && computedBgStyle.backgroundImage !== 'none') {
-        // 从 URL 中提取图片路径
         const bgImageUrlMatch = computedBgStyle.backgroundImage.match(/url\("?(.+?)"?\)/);
         if (bgImageUrlMatch) {
             const bgImageUrl = bgImageUrlMatch[1];
             
-            // 异步加载图片以获取其原始尺寸
             const img = new Image();
             img.src = bgImageUrl;
             await new Promise(resolve => {
                 img.onload = resolve;
-                img.onerror = resolve; // 即使加载失败也继续
+                img.onerror = resolve;
             });
 
             const elementRect = elementForContext.getBoundingClientRect();
@@ -167,9 +162,9 @@ async function getDynamicBackground(elementForContext) {
 
             backgroundImageInfo = {
                 url: bgImageUrl,
-                originalWidth: img.naturalWidth || bgRect.width, // 使用自然宽度，失败则回退
+                originalWidth: img.naturalWidth || bgRect.width,
                 originalHeight: img.naturalHeight || bgRect.height,
-                styles: { // 保留样式供非平铺模式使用
+                styles: {
                     backgroundImage: computedBgStyle.backgroundImage,
                     backgroundSize: computedBgStyle.backgroundSize,
                     backgroundRepeat: computedBgStyle.backgroundRepeat,
@@ -182,33 +177,25 @@ async function getDynamicBackground(elementForContext) {
     return { color: backgroundColor, imageInfo: backgroundImageInfo };
 }
 
-// SillyTavern 插件入口点
 jQuery(async () => {
     console.log(`${PLUGIN_NAME}: 插件初始化中...`);
 
-    // === 动态加载 html2canvas-pro.min.js ===
     try {
-        // === 重点修改这里的路径 ===
         await loadScript(`scripts/extensions/third-party/${PLUGIN_ID}/html2canvas-pro.min.js`);
     } catch (error) {
         console.error(`${PLUGIN_NAME}: 无法加载 html2canvas-pro.min.js。插件功能将受限。`, error);
         return;
     }
 
-    // 1. 加载配置（从 extension_settings）
     loadConfig();
 
-    // 2. 注册设置面板
-    // 加载设置 HTML 模板
     let settingsHtml;
     try {
-        // 尝试使用正确的路径加载
         settingsHtml = await renderExtensionTemplateAsync(`third-party/${PLUGIN_ID}`, 'settings');
         console.log(`${PLUGIN_NAME}: 成功加载设置面板模板`);
     } catch (error) {
         console.error(`${PLUGIN_NAME}: 无法加载设置面板模板:`, error);
         
-        // 创建内联替代模板
         settingsHtml = `
         <div id="scane2_settings">
           <h2>ST截图3.0</h2>
@@ -262,11 +249,9 @@ jQuery(async () => {
         `;
     }
 
-    // 将HTML注入到SillyTavern的扩展设置面板
     $('#extensions_settings_content').append(settingsHtml);
 
-    // 3. 绑定设置界面元素和事件
-    const settingsForm = $('#extensions_settings_content'); // 确保在正确的上下文查找元素
+    const settingsForm = $('#extensions_settings_content');
 
     const screenshotDelayEl = settingsForm.find('#st_h2c_screenshotDelay');
     const scrollDelayEl = settingsForm.find('#st_h2c_scrollDelay');
@@ -280,8 +265,6 @@ jQuery(async () => {
     const letterRenderingEl = settingsForm.find('#st_h2c_letterRendering');
     const debugOverlayEl = settingsForm.find('#st_h2c_debugOverlay');
 
-
-    // 从设置中加载值到 UI
     function updateSettingsUI() {
         const settings = getPluginSettings();
         screenshotDelayEl.val(settings.screenshotDelay);
@@ -291,14 +274,12 @@ jQuery(async () => {
         autoInstallButtonsEl.prop('checked', settings.autoInstallButtons);
         altButtonLocationEl.prop('checked', settings.altButtonLocation !== undefined ? settings.altButtonLocation : true);
         
-        // 如果UI中有这些元素，设置它们的值
         if (letterRenderingEl) letterRenderingEl.prop('checked', settings.letterRendering);
         if (debugOverlayEl) debugOverlayEl.prop('checked', settings.debugOverlay);
     }
 
-    // 保存设置
     saveSettingsBtn.on('click', () => {
-        const settings = getPluginSettings(); // 获取当前设置引用
+        const settings = getPluginSettings();
 
         settings.screenshotDelay = parseInt(screenshotDelayEl.val(), 10) || defaultSettings.screenshotDelay;
         settings.scrollDelay = parseInt(scrollDelayEl.val(), 10) || defaultSettings.scrollDelay;
@@ -309,23 +290,19 @@ jQuery(async () => {
         settings.letterRendering = letterRenderingEl.prop('checked');
         settings.debugOverlay = debugOverlayEl.prop('checked');
 
-        saveSettingsDebounced(); // 持久化设置
+        saveSettingsDebounced();
 
         saveStatusEl.text("设置已保存!").css('color', '#4cb944').show();
         setTimeout(() => saveStatusEl.hide(), 1000);
 
-        // 重新加载配置，以便立即应用到插件逻辑
         loadConfig();
-        // 根据新的 autoInstallButtons 设置，重新安装或清理按钮
         if (config.autoInstallButtons) {
             installScreenshotButtons();
         } else {
-            // 如果禁用自动安装，移除所有已安装的按钮
             document.querySelectorAll(`.${config.buttonClass}`).forEach(btn => btn.remove());
         }
     });
 
-    // "截取最后一条消息"按钮的点击事件
     captureLastMsgBtn.on('click', async () => {
         const options = {
             target: 'last',
@@ -344,54 +321,42 @@ jQuery(async () => {
         }
     });
 
-    // 初始化加载设置到 UI
     updateSettingsUI();
 
-    // 4. 初始化截图按钮（如果配置为自动安装），无需额外延迟
     if (config.autoInstallButtons) {
-        installScreenshotButtons();                  // 直接安装
+        installScreenshotButtons();
     } else {
         console.log(`${PLUGIN_NAME}: 自动安装截图按钮已禁用.`);
     }
 
     console.log(`${PLUGIN_NAME}: 插件初始化完成.`);
 
-    // 创建并添加扩展菜单按钮
     function addExtensionMenuButton() {
-        // 检查按钮是否已存在，防止重复添加
         if (document.querySelector(`#extensionsMenu .fa-camera[data-plugin-id="${PLUGIN_ID}"]`)) {
             return;
         }
         
-        // 创建相机按钮
         const menuButton = document.createElement('div');
         menuButton.classList.add('fa-solid', 'fa-camera', 'extensionsMenuExtension');
         menuButton.title = PLUGIN_NAME;
         menuButton.setAttribute('data-plugin-id', PLUGIN_ID);
 
-        // 直接添加文本节点
         menuButton.appendChild(document.createTextNode('截图设置'));
         
-        // 添加点击事件处理器，打开自定义截图弹窗
         menuButton.addEventListener('click', () => {
-            // 隐藏扩展菜单
             const extensionsMenu = document.getElementById('extensionsMenu');
             if (extensionsMenu) extensionsMenu.style.display = 'none';
             
-            // 创建并显示截图功能弹窗
             showScreenshotPopup();
         });
         
-        // 将按钮添加到扩展菜单
         const extensionsMenu = document.getElementById('extensionsMenu');
         if (extensionsMenu) {
             extensionsMenu.appendChild(menuButton);
         }
     }
 
-    // 显示截图功能弹窗
     function showScreenshotPopup() {
-        // 创建自定义弹窗
         const overlay = document.createElement('div');
         overlay.className = 'st-screenshot-overlay';
         overlay.style.position = 'fixed';
@@ -413,7 +378,6 @@ jQuery(async () => {
         popup.style.maxWidth = '300px';
         popup.style.width = '100%';
 
-        // 添加选项
         const options = [
             { id: 'last_msg', icon: 'fa-camera', text: '截取最后一条消息' },
             { id: 'conversation', icon: 'fa-images', text: '截取整个对话' },
@@ -436,11 +400,9 @@ jQuery(async () => {
                 <span>${option.text}</span>
             `;
             
-            // 悬停效果
             btn.addEventListener('mouseover', () => btn.style.backgroundColor = '#4a4a4a');
             btn.addEventListener('mouseout', () => btn.style.backgroundColor = '#3a3a3a');
             
-            // 点击事件
             btn.addEventListener('click', async () => {
                 console.log(`[${PLUGIN_NAME}] ${option.id} clicked`);
                 document.body.removeChild(overlay);
@@ -477,13 +439,11 @@ jQuery(async () => {
         overlay.appendChild(popup);
         document.body.appendChild(overlay);
         
-        // 点击空白区域关闭弹窗
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) document.body.removeChild(overlay);
         });
     }
 
-    // 调用添加按钮函数或使用MutationObserver确保菜单加载完成
     function waitForExtensionsMenu() {
         if (document.getElementById('extensionsMenu')) {
             addExtensionMenuButton();
@@ -503,20 +463,16 @@ jQuery(async () => {
         });
     }
 
-    // 启动观察器
     waitForExtensionsMenu();
 });
 
 
-// --- 辅助函数：准备单个元素给 html2canvas-pro (通过克隆到临时容器) ---
-// 准备单个元素用于html2canvas截图（修复折叠状态问题）
+// ### MODIFICATION 1 of 3: 'iframe' is no longer removed from the DOM clone ###
 function prepareSingleElementForHtml2CanvasPro(originalElement) {
     if (!originalElement) return null;
 
-    // 1. 克隆原始元素（深度克隆）
     const element = originalElement.cloneNode(true);
     
-    // 2. 复制计算样式
     const computedStyle = window.getComputedStyle(originalElement);
     const importantStyles = [
         'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
@@ -532,7 +488,6 @@ function prepareSingleElementForHtml2CanvasPro(originalElement) {
         element.style[style] = computedStyle[style];
     });
     
-    // 3. 移除不需要的元素
     element.querySelectorAll('.mes_buttons').forEach(buttonsArea => {
         buttonsArea?.parentNode?.removeChild(buttonsArea);
     });
@@ -543,9 +498,9 @@ function prepareSingleElementForHtml2CanvasPro(originalElement) {
         });
     });
 
+    // MODIFICATION: 'iframe' is preserved to be handled by the dedicated function.
     element.querySelectorAll('script, style, noscript, canvas').forEach(el => el.remove());
     
-    // 4. 修复样式问题
     element.querySelectorAll('.mes_reasoning, .mes_reasoning_delete, .mes_reasoning_edit_cancel').forEach(el => {
         if (el?.style) {
             el.style.removeProperty('color');
@@ -554,21 +509,17 @@ function prepareSingleElementForHtml2CanvasPro(originalElement) {
         }
     });
 
-    // 5. 修复折叠状态同步问题（核心修复）
     function syncDetailsState(origNode, cloneNode) {
         if (!origNode || !cloneNode) return;
         
-        // 同步details元素的open状态
         if (origNode.tagName === 'DETAILS') {
             const isOpen = origNode.hasAttribute('open');
             
-            // 强制设置克隆节点的状态
             if (isOpen) {
                 cloneNode.setAttribute('open', '');
             } else {
                 cloneNode.removeAttribute('open');
                 
-                // 如果是折叠状态，移除所有非summary子节点
                 Array.from(cloneNode.childNodes).forEach(child => {
                     if (child.tagName && child.tagName !== 'SUMMARY') {
                         cloneNode.removeChild(child);
@@ -577,7 +528,6 @@ function prepareSingleElementForHtml2CanvasPro(originalElement) {
             }
         }
         
-        // 递归处理子节点
         const origChildren = origNode.children || [];
         const cloneChildren = cloneNode.children || [];
         
@@ -588,153 +538,106 @@ function prepareSingleElementForHtml2CanvasPro(originalElement) {
         }
     }
     
-    // 执行同步
     syncDetailsState(originalElement, element);
     
-    // 6. 确保元素可见
     element.style.display = 'block';
     element.style.visibility = 'visible';
     element.style.opacity = '1';
     element.style.width = originalElement.offsetWidth + 'px';
-    element.style.height = 'auto'; // 高度自适应
+    element.style.height = 'auto';
     element.style.overflow = 'visible';
     
-    // 7. 添加调试边框
-    element.style.border = '1px solid red'; // 临时添加边框以便调试
+    element.style.border = '1px solid red';
     
     return element;
 }
 
-// *** BUG修复 V2: 增加对 iframe 加载完成事件的等待 ***
+// ### MODIFICATION 2 of 3: This function is completely replaced with the advanced "Recursive Render & Replace" strategy ###
+/**
+ * Recursively processes iframes within a cloned element by rendering their content to an image and replacing the iframe tag.
+ * @param {HTMLElement} clonedElement - The cloned element prepared for screenshotting.
+ * @param {Document} originalDocument - The original document object to access iframe's contentWindow.
+ */
 async function handleIframesAsync(clonedElement, originalDocument) {
     const iframes = clonedElement.querySelectorAll('iframe');
-    if (iframes.length === 0) return;
+    if (iframes.length === 0) {
+        return;
+    }
 
-    // 找到原始文档中的 iframes 以便操作
+    // Find the corresponding iframe elements in the original document.
     const originalIframes = Array.from(originalDocument.querySelectorAll('iframe'));
 
-    // 为每一个 iframe 的处理创建一个 Promise
-    const promises = Array.from(iframes).map((iframe, index) => new Promise(async (resolve, reject) => {
+    const promises = Array.from(iframes).map(async (iframe, index) => {
         const originalIframe = originalIframes[index];
-        if (!originalIframe) {
-            console.warn(`[${PLUGIN_NAME}] 找不到与克隆的iframe匹配的原始iframe，跳过。`);
-            return resolve(); // 跳过这个iframe
-        }
+        if (!originalIframe) return;
 
-        // 设置一个超时，防止iframe因某些原因永远不加载
-        const timeoutId = setTimeout(() => {
-            console.error(`[${PLUGIN_NAME}] 处理iframe超时:`, originalIframe.src);
-            reject(new Error(`Iframe loading timed out for ${originalIframe.src}`));
-        }, 8000); // 8秒超时
+        try {
+            // Check if the iframe is same-origin and accessible.
+            const isSameOrigin = originalIframe.contentWindow && originalIframe.contentWindow.document;
 
-        const processIframe = async () => {
-            clearTimeout(timeoutId); // 清除超时计时器
-            try {
-                const iframeWin = originalIframe.contentWindow;
-                if (!iframeWin || !iframeWin.document) {
-                    console.warn(`[${PLUGIN_NAME}] 无法访问iframe的contentWindow，可能是跨域问题。`);
-                    // 创建一个占位符
-                    const placeholder = document.createElement('div');
-                    placeholder.style.width = `${originalIframe.clientWidth}px`;
-                    placeholder.style.height = `${originalIframe.clientHeight}px`;
-                    placeholder.style.border = '1px dashed #999';
-                    placeholder.textContent = '跨域或无法访问的内容';
-                    if (iframe.parentNode) iframe.parentNode.replaceChild(placeholder, iframe);
-                    return resolve();
-                }
-
-                const iframeDoc = iframeWin.document;
-                const iframeBody = iframeDoc.body;
-                const iframeHtml = iframeDoc.documentElement;
-
-                // *** 核心逻辑与之前相同，但在加载完成后执行 ***
+            if (isSameOrigin) {
+                console.log(`${PLUGIN_NAME}: Same-origin iframe found, recursively capturing...`, originalIframe.src);
+                const iframeDoc = originalIframe.contentWindow.document;
                 
-                // 1. 保存原始样式
-                const originalStyles = {
-                    body: { height: iframeBody.style.height, overflow: iframeBody.style.overflow },
-                    html: { height: iframeHtml.style.height, overflow: iframeHtml.style.overflow }
-                };
-
-                // 2. 临时修改样式以准备测量
-                iframeBody.style.height = 'auto';
-                iframeBody.style.overflow = 'visible';
-                iframeHtml.style.height = 'auto';
-                iframeHtml.style.overflow = 'visible';
-                await new Promise(res => setTimeout(res, 100)); // 等待UI重排
-
-                // 3. 精确测量内容的完整滚动高度
-                const contentWidth = Math.max(iframeBody.scrollWidth, iframeHtml.scrollWidth, originalIframe.clientWidth);
-                const contentHeight = Math.max(iframeBody.scrollHeight, iframeHtml.scrollHeight);
-                const viewportWidth = originalIframe.clientWidth;
-
-                if (contentHeight <= 0) {
-                    console.warn(`[${PLUGIN_NAME}] Iframe 内容高度为0，跳过渲染。`);
-                    Object.assign(iframeBody.style, originalStyles.body); // 恢复样式
-                    Object.assign(iframeHtml.style, originalStyles.html);
-                    return resolve();
-                }
-                
-                // 4. 使用 html2canvas 渲染
-                const canvas = await html2canvas(iframeBody, {
-                    ...config.html2canvasOptions,
-                    width: contentWidth,
-                    height: contentHeight,
-                    windowWidth: contentWidth,
-                    windowHeight: contentHeight,
-                    scrollX: 0,
-                    scrollY: 0,
-                    onclone: (clonedDoc) => {
-                        const clonedHtml = clonedDoc.documentElement;
-                        const clonedBody = clonedDoc.body;
-                        clonedHtml.style.height = `${contentHeight}px`;
-                        clonedHtml.style.overflow = 'visible';
-                        clonedBody.style.height = `${contentHeight}px`;
-                        clonedBody.style.overflow = 'visible';
-                        clonedBody.style.position = 'static';
-                    }
+                // Capture the iframe's body content.
+                const canvas = await html2canvas(iframeDoc.body, {
+                    scale: config.html2canvasOptions.scale,
+                    useCORS: true,
+                    allowTaint: true,
+                    backgroundColor: window.getComputedStyle(iframeDoc.body).backgroundColor,
+                    foreignObjectRendering: false, // Prevent infinite recursion inside iframe
                 });
-
-                // 5. 恢复原始 iframe 的样式
-                Object.assign(iframeBody.style, originalStyles.body);
-                Object.assign(iframeHtml.style, originalStyles.html);
-
-                // 6. 创建并替换为图片
+                
+                const imgDataUrl = canvas.toDataURL('image/png');
+                
+                // Create an img element to replace the iframe.
                 const img = document.createElement('img');
-                img.src = canvas.toDataURL('image/png');
-                img.style.width = `${viewportWidth}px`;
-                img.style.height = 'auto'; // 高度自适应，保持比例
-                img.style.display = 'block';
-                if (iframe.parentNode) iframe.parentNode.replaceChild(img, iframe);
+                img.src = imgDataUrl;
+                img.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
+                img.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
+                img.style.border = 'none'; // Ensure the replacement image has no extra border.
 
-                resolve(); // 这个iframe处理完成
-
-            } catch (error) {
-                console.error(`${PLUGIN_NAME}: 处理iframe时发生内部错误`, error);
-                reject(error);
+                // Replace the iframe with the generated image in the cloned DOM.
+                if (iframe.parentNode) {
+                    iframe.parentNode.replaceChild(img, iframe);
+                }
+            } else {
+                console.warn(`${PLUGIN_NAME}: Cross-origin iframe found, cannot capture. Creating placeholder.`, originalIframe.src);
+                // For cross-origin iframes, create a placeholder.
+                const placeholder = document.createElement('div');
+                placeholder.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
+                placeholder.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
+                placeholder.style.border = '1px dashed #999';
+                placeholder.style.backgroundColor = '#f0f0f0';
+                placeholder.style.display = 'flex';
+                placeholder.style.alignItems = 'center';
+                placeholder.style.justifyContent = 'center';
+                placeholder.style.fontSize = '12px';
+                placeholder.style.color = '#666';
+                placeholder.textContent = '跨源内容无法截取';
+                if (iframe.parentNode) {
+                    iframe.parentNode.replaceChild(placeholder, iframe);
+                }
             }
-        };
-
-        // ** 关键改动：检查iframe是否已加载完成 **
-        if (originalIframe.contentWindow.document.readyState === 'complete') {
-            // 如果已经加载完了，直接处理
-            console.log(`[${PLUGIN_NAME}] Iframe已加载，直接处理。`);
-            await processIframe();
-        } else {
-            // 否则，添加 'load' 事件监听器
-            console.log(`[${PLUGIN_NAME}] Iframe未加载，等待 'load' 事件...`);
-            originalIframe.addEventListener('load', processIframe, { once: true });
+        } catch (error) {
+            console.error(`${PLUGIN_NAME}: Error processing iframe:`, error, originalIframe.src);
+            // Also replace with a placeholder on error.
+             const errorPlaceholder = document.createElement('div');
+             errorPlaceholder.style.width = iframe.style.width || `${originalIframe.clientWidth}px`;
+             errorPlaceholder.style.height = iframe.style.height || `${originalIframe.clientHeight}px`;
+             errorPlaceholder.style.border = '1px dashed red';
+             errorPlaceholder.textContent = 'Iframe 渲染错误';
+             if (iframe.parentNode) {
+                 iframe.parentNode.replaceChild(errorPlaceholder, iframe);
+             }
         }
-    }));
+    });
 
-    // 等待所有的 iframe 都处理完毕
     await Promise.all(promises);
 }
 
-// *** NEW FUNCTION END ***
-
-// 核心截图函数：创建一个临时容器，放入净化后的元素，然后渲染容器
 async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = {}) {
-    console.log('启动最终截图流程 (平铺+裁剪):', elementToCapture);
+    console.log('启动最终截图流程 (已修正并应用偏移):', elementToCapture);
     
     let overlay = null;
     if (config.debugOverlay) {
@@ -749,213 +652,60 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
         el.style.display = 'none';
     });
 
-    // 1. 准备内容和尺寸计算
-    if (overlay) updateOverlay(overlay, '准备内容和计算尺寸...', 0.05);
-    const preparedElement = prepareSingleElementForHtml2CanvasPro(elementToCapture);
-    if (!preparedElement) throw new Error("无法准备截图元素");
-    
-    // 关键：将净化后的元素临时添加到DOM中，以便精确测量其尺寸
-    const measurementContainer = document.createElement('div');
-    measurementContainer.style.position = 'absolute';
-    measurementContainer.style.left = '-9999px';
-    measurementContainer.style.opacity = '0';
-    measurementContainer.appendChild(preparedElement);
-    document.body.appendChild(measurementContainer);
-    const contentWidth = preparedElement.offsetWidth;
-    const contentHeight = preparedElement.offsetHeight;
-    document.body.removeChild(measurementContainer); // 测量后立即移除
-
-    console.log('DEBUG: 内容测量', {
-        elementToCapture: elementToCapture.tagName + (elementToCapture.className ? '.' + elementToCapture.className.replace(/\s+/g, '.') : ''),
-        preparedElement: preparedElement.tagName + (preparedElement.className ? '.' + preparedElement.className.replace(/\s+/g, '.') : ''),
-        contentWidth,
-        contentHeight,
-        aspectRatio: contentWidth / contentHeight
-    });
-    
-    if (contentWidth === 0 || contentHeight === 0) throw new Error("无法测量消息内容尺寸。");
-    
-    // 2. 准备渲染容器和背景
-    if (overlay) updateOverlay(overlay, '获取并构建背景...', 0.15);
-    const background = await getDynamicBackground(elementToCapture);
-    
-    // 渲染容器将包含所有图层
-    const tempContainer = document.createElement('div');
-    tempContainer.style.position = 'absolute';
-    tempContainer.style.left = '-9999px'; // 保持在屏幕外
-    tempContainer.style.top = '0'; // 确保在视口内
-    tempContainer.style.width = `${contentWidth + 20}px`;
-    tempContainer.style.height = `${contentHeight + 20}px`;
-    tempContainer.style.overflow = 'visible'; // 改为visible，确保内容不被裁剪
-    tempContainer.style.backgroundColor = background.color; // 确保背景色应用
-    tempContainer.style.zIndex = '-9999'; // 确保在底层
-    tempContainer.style.opacity = '1'; // 确保完全不透明
-    // 添加调试输出
-    console.log('DEBUG: 创建临时容器');
-    console.log('测量的内容尺寸 - contentWidth:', contentWidth, 'contentHeight:', contentHeight);
-    console.log('设置的容器尺寸 - width:', contentWidth + 20, 'height:', contentHeight + 20);
-
-    // 2.1 创建颜色叠加层 (中间层)
-    const colorOverlayDiv = document.createElement('div');
-    Object.assign(colorOverlayDiv.style, {
-        position: 'absolute', top: '0', left: '0',
-        width: '100%', height: '100%',
-        backgroundColor: background.color, zIndex: '2'
-    });
-    tempContainer.appendChild(colorOverlayDiv);
-
-    // 2.2 创建背景图层 (最底层) - 实现平铺逻辑
-    if (background.imageInfo) {
-        const bgInfo = background.imageInfo;
-        const bgContainer = document.createElement('div');
-        Object.assign(bgContainer.style, bgInfo.styles, {
-            position: 'absolute', top: '0', left: '0',
-            width: '100%', height: '100%', zIndex: '1'
-        });
-
-        // 智能平铺逻辑
-        if (bgInfo.originalHeight > 0 && (contentHeight + 20) > bgInfo.originalHeight) {
-            console.log('内容高度超出背景，启用背景平铺。');
-            bgContainer.style.backgroundImage = 'none'; // 禁用默认背景
-            
-            const neededTiles = Math.ceil((contentHeight + 20) / bgInfo.originalHeight);
-            for (let i = 0; i < neededTiles; i++) {
-                const tile = document.createElement('div');
-                Object.assign(tile.style, {
-                    position: 'absolute',
-                    left: '0',
-                    top: `${i * bgInfo.originalHeight}px`,
-                    width: '100%',
-                    height: `${bgInfo.originalHeight}px`,
-                    backgroundImage: `url("${bgInfo.url}")`,
-                    backgroundSize: bgInfo.styles.backgroundSize,
-                    backgroundRepeat: 'no-repeat', // 每个瓦片不重复
-                    // 我们只在Y轴平铺，所以X轴位置继承原始计算
-                    backgroundPosition: `${bgInfo.styles.backgroundPosition.split(' ')[0]} 0px`,
-                });
-                bgContainer.appendChild(tile);
-            }
-        }
-        tempContainer.appendChild(bgContainer);
-    }
-
-    // 2.3 创建内容层 (最顶层)
-    const contentDiv = document.createElement('div');
-    Object.assign(contentDiv.style, {
-        position: 'relative', 
-        zIndex: '3', 
-        padding: '10px',
-        display: 'block',
-        width: '100%',
-        height: 'auto',
-        overflow: 'visible'
-    });
-    // 使用我们之前测量时创建的、已净化和渲染的元素
-    contentDiv.appendChild(preparedElement);
-    tempContainer.appendChild(contentDiv);
-    
-    document.body.appendChild(tempContainer);
-
-    // 给浏览器时间来渲染tempContainer的内容
-    console.log('DEBUG: 等待临时容器渲染...');
-    await new Promise(resolve => setTimeout(resolve, Math.max(100, config.screenshotDelay)));
-    console.log('DEBUG: 临时容器渲染等待完成');
-
     let finalDataUrl = null;
+    const tempContainer = document.createElement('div');
 
     try {
-        // 3. 第一阶段：超量渲染
-        if (overlay) updateOverlay(overlay, '阶段1: 渲染完整场景...', 0.3);
-        console.log('DEBUG: html2canvas配置', {
+        if (overlay) updateOverlay(overlay, '准备内容和计算尺寸...', 0.05);
+        const contentWidth = elementToCapture.offsetWidth;
+        if (contentWidth === 0) {
+            throw new Error("无法测量消息内容宽度，元素可能不可见。");
+        }
+
+        const preparedElement = prepareSingleElementForHtml2CanvasPro(elementToCapture);
+        if (!preparedElement) throw new Error("无法准备截图元素");
+
+        // ### 新增修改：在这里对克隆元素应用相对定位和偏移 ###
+        Object.assign(preparedElement.style, {
+            position: 'relative',
+            left: '-10px',
+            top: '-10px',
+        });
+        // ### 修改结束 ###
+
+        if (overlay) updateOverlay(overlay, '获取并构建背景...', 0.15);
+        const background = await getDynamicBackground(elementToCapture);
+
+        Object.assign(tempContainer.style, {
+            position: 'absolute',
+            left: '-9999px',
+            top: '0px',
+            width: `${contentWidth}px`,
+            padding: '10px', // 保持10px的padding作为基准
+            backgroundColor: background.color,
+            overflow: 'visible',
+        });
+
+        if (background.imageInfo) {
+            Object.assign(tempContainer.style, background.imageInfo.styles);
+        }
+
+        tempContainer.appendChild(preparedElement);
+
+        document.body.appendChild(tempContainer);
+
+        if (overlay) updateOverlay(overlay, '正在处理内联框架(iframe)...', 0.25);
+        await handleIframesAsync(tempContainer, elementToCapture.ownerDocument);
+        
+        await new Promise(resolve => setTimeout(resolve, Math.max(100, config.screenshotDelay)));
+
+        if (overlay) updateOverlay(overlay, '正在渲染场景...', 0.4);
+        const finalCanvas = await html2canvas(tempContainer, {
             ...config.html2canvasOptions,
-            backgroundColor: null
-        });
-        const rawCanvas = await html2canvas(tempContainer, {
-            ...config.html2canvasOptions,
-            backgroundColor: null,
-            logging: true, // 临时启用日志以便调试
-            onclone: function(documentClone) {
-                // 检查克隆文档中的元素
-                const clonedContainer = documentClone.querySelector('body > div'); // 应该是我们的tempContainer
-                if (clonedContainer) {
-                    console.log('DEBUG: 克隆文档中的容器', {
-                        width: clonedContainer.offsetWidth,
-                        height: clonedContainer.offsetHeight,
-                        childrenCount: clonedContainer.children.length,
-                        innerHTML: clonedContainer.innerHTML.substring(0, 100) + '...' // 只显示前100个字符
-                    });
-                } else {
-                    console.error('DEBUG: 克隆文档中未找到容器!');
-                }
-            }
-        });
-
-        // 输出原始画布的像素数据，检查是否为空
-        const rawCtx = rawCanvas.getContext('2d');
-        const rawImageData = rawCtx.getImageData(0, 0, rawCanvas.width, rawCanvas.height);
-        const hasNonTransparentPixels = Array.from(rawImageData.data).some((value, index) => index % 4 === 3 && value > 0);
-        console.log('DEBUG: 原始画布数据检查', {
-            width: rawCanvas.width,
-            height: rawCanvas.height,
-            hasContent: hasNonTransparentPixels,
-            samplePixels: Array.from(rawImageData.data.slice(0, 40))
-        });
-
-        // 4. 第二阶段：精确裁剪
-        if (overlay) updateOverlay(overlay, '阶段2: 精确裁剪内容...', 0.8);
-        const finalCanvas = document.createElement('canvas');
-        const ctx = finalCanvas.getContext('2d');
-
-        // 1. 记录 tempContainer 的实际宽高
-        const containerWidth = tempContainer.offsetWidth;
-        const containerHeight = tempContainer.offsetHeight;
-
-        // 2. 计算 scale
-        const scale = rawCanvas.width / containerWidth;
-
-        // 3. 计算内容区域（去掉padding）
-        const padding = 10; // 你加的padding
-        const actualContentWidth = containerWidth - 2 * padding;
-        const actualContentHeight = containerHeight - 2 * padding;
-
-        // 4. 最终画布的尺寸
-        finalCanvas.width = actualContentWidth * scale;
-        finalCanvas.height = actualContentHeight * scale;
-
-        // 调试输出
-        console.log('DEBUG: 裁剪参数', {
-            containerWidth, containerHeight,
-            scale,
-            padding,
-            actualContentWidth, actualContentHeight,
-            finalCanvasWidth: finalCanvas.width,
-            finalCanvasHeight: finalCanvas.height,
-            sourceX: padding * scale,
-            sourceY: padding * scale,
-            sourceWidth: actualContentWidth * scale,
-            sourceHeight: actualContentHeight * scale
-        });
-
-        // 5. 精确裁剪
-        ctx.drawImage(
-            rawCanvas,
-            padding * scale, // 源X: padding
-            padding * scale, // 源Y: padding
-            actualContentWidth * scale, // 源宽度: 精确内容宽度
-            actualContentHeight * scale, // 源高度: 精确内容高度
-            0, 0, // 目标X,Y
-            finalCanvas.width, // 目标宽度
-            finalCanvas.height // 目标高度
-        );
-
-        // 检查最终画布是否有内容
-        const finalImageData = ctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
-        const finalHasContent = Array.from(finalImageData.data).some((value, index) => index % 4 === 3 && value > 0);
-        console.log('DEBUG: 最终画布内容检查', {
-            hasContent: finalHasContent,
-            samplePixels: Array.from(finalImageData.data.slice(0, 40))
+            backgroundColor: null, 
         });
         
+        if (overlay) updateOverlay(overlay, '生成最终图像...', 0.9);
         finalDataUrl = finalCanvas.toDataURL('image/png');
 
     } catch (error) {
@@ -963,10 +713,13 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
         if (overlay) updateOverlay(overlay, `渲染错误: ${error.message.substring(0, 60)}...`, 0);
         throw error;
     } finally {
-        // 5. 清理
-        if (tempContainer?.parentElement) tempContainer.parentElement.removeChild(tempContainer);
+        if (tempContainer.parentElement) {
+            tempContainer.parentElement.removeChild(tempContainer);
+        }
         elementsToHide.forEach(el => {
-            if (originalDisplays.has(el)) el.style.display = originalDisplays.get(el);
+            if (originalDisplays.has(el)) {
+                el.style.display = originalDisplays.get(el);
+            }
         });
         if (overlay?.parentElement) {
             const delay = finalDataUrl ? 1200 : 3000;
@@ -976,11 +729,11 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
         }
     }
     
-    if (!finalDataUrl) throw new Error("截图流程未能生成最终图像数据。");
+    if (!finalDataUrl) {
+        throw new Error("截图流程未能生成最终图像数据。");
+    }
     return finalDataUrl;
 }
-
-// 添加同步函数（与prepareSingleElementForHtml2CanvasPro中的相同）
 function syncDetailsState(origNode, cloneNode) {
     if (origNode.tagName === 'DETAILS') {
         cloneNode.open = origNode.open;
@@ -996,8 +749,6 @@ function syncDetailsState(origNode, cloneNode) {
     }
 }
 
-// This function is specifically for capturing multiple messages (or the whole conversation)
-// It creates a temporary container, adds prepared clones of multiple messages, then renders the container.
 async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionHint, h2cUserOptions = {}) {
     if (!messagesToCapture || messagesToCapture.length === 0) {
         throw new Error("没有提供消息给 captureMultipleMessagesWithHtml2Canvas");
@@ -1019,7 +770,6 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
     tempContainer.style.top = '-9999px';
     tempContainer.style.padding = '10px';
 
-    // --- 健壮性检查并获取聊天容器用于确定宽度和背景 ---
     const chatSelector = config.chatContentSelector;
     let chatContentEl = null;
     if (typeof chatSelector === 'string' && chatSelector) {
@@ -1027,7 +777,6 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
     } else {
        console.warn("config.chatContentSelector is invalid:", chatSelector, ". Cannot find chat container for width/background.");
     }
-    // --- End 健壮性检查 ---
 
     let containerWidth = 'auto';
     if (chatContentEl) {
@@ -1049,15 +798,11 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
              }
         }
     }
-    // 透明背景
     tempContainer.style.backgroundColor = chatBgColor;
     
-
-
     updateOverlay(overlay, `准备 ${messagesToCapture.length} 条消息 (pro v5)...`, 0.05);
     messagesToCapture.forEach(msg => {
         try {
-            // Use the simplified preparation function for each message clone
             const preparedClone = prepareSingleElementForHtml2CanvasPro(msg);
             if (preparedClone) {
                 tempContainer.appendChild(preparedClone);
@@ -1066,21 +811,16 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
             }
         } catch (e) {
             console.error("Error preparing message for multi-capture (pro v5):", msg, e);
-            // Decide whether to skip this message or re-throw to stop the whole process
-            // For now, we log and continue.
         }
     });
     document.body.appendChild(tempContainer);
     
-    // *** MODIFICATION START: Handle all iframes in the container ***
+    // ### MODIFICATION 3 of 3 (Part B): Call handleIframesAsync before capturing multiple messages ###
     if (overlay) updateOverlay(overlay, '正在处理所有内联框架(iframe)...', 0.15);
-    // 注意：第二个参数是原始文档
     if (messagesToCapture.length > 0) {
         await handleIframesAsync(tempContainer, messagesToCapture[0].ownerDocument);
     }
-    // *** MODIFICATION END ***
-
-    // Give cloned and prepared elements time to settle and render within the tempContainer
+    
     await new Promise(resolve => setTimeout(resolve, config.screenshotDelay));
 
     try {
@@ -1088,14 +828,12 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
 
         const finalH2cOptions = {...config.html2canvasOptions, ...h2cUserOptions};
         finalH2cOptions.ignoreElements = (element) => {
-            // 已有的忽略条件
             if (element.id === 'top-settings-holder' || 
                 element.id === 'form_sheld' || 
                 element.classList.contains('st-capture-overlay')) {
                 return true;
             }
             
-            // 添加新的忽略条件 - 使用类组合更可靠
             if (element.classList && 
                 element.classList.contains('flex-container') && 
                 element.classList.contains('swipeRightBlock') && 
@@ -1104,19 +842,13 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
                 return true;
             }
             
-            // 新增: 更精确地忽略表情框相关元素
             try {
-                // 检查是否是聊天区域内的表情元素
                 if (element.closest('#chat')) {
-                    // 检查元素是否匹配特定结构
                     const isEmotionElement = 
-                        // 检查是否是div[4]/div[1]/div[2]结构
                         (element.parentElement && 
                          element.parentElement.parentElement && 
                          element.parentElement.parentElement.matches('div[class*="mes"] > div[class*="mes_block"] > div')) ||
-                        // 或者检查元素是否是表情容器
                         element.matches('.expression_box, .expression-container, [data-emotion]') ||
-                        // 或者检查元素是否包含表情相关内容
                         (element.querySelector && element.querySelector('.expression_box, .expression-container, [data-emotion]'));
                         
                     if (isEmotionElement) {
@@ -1124,7 +856,6 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
                     }
                 }
             } catch (e) {
-                // 忽略可能的错误
                 console.debug('Expression element check error:', e);
             }
             
@@ -1164,27 +895,22 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
     return dataUrl;
 }
 
-
-// This function routes capture requests based on target ('last', 'selected', 'conversation')
-// It calls the appropriate html2canvas-pro capture function.
 async function captureMessageWithOptions(options) {
     const { target, includeHeader } = options;
     console.log('captureMessageWithOptions (html2canvas-pro v5) called with:', options);
 
-    // --- 健壮性检查并获取聊天容器 ---
     const chatSelector = config.chatContentSelector;
     if (typeof chatSelector !== 'string' || !chatSelector) {
          const errorMsg = `聊天内容容器选择器无效: '${chatSelector}'`;
          console.error(`${PLUGIN_NAME}:`, errorMsg);
-         throw new Error(errorMsg); // Throw the specific error here
+         throw new Error(errorMsg);
     }
     const chatContentEl = document.querySelector(chatSelector);
     if (!chatContentEl) {
          const errorMsg = `聊天内容容器 '${chatSelector}' 未找到!`;
          console.error(`${PLUGIN_NAME}:`, errorMsg);
-         throw new Error(errorMsg); // Throw the specific error here
+         throw new Error(errorMsg);
     }
-    // --- End 健壮性检查 ---
 
 
     let elementToRender;
@@ -1202,20 +928,17 @@ async function captureMessageWithOptions(options) {
         case 'conversation':
             messagesForMultiCapture = Array.from(chatContentEl.querySelectorAll(config.messageSelector));
             if (messagesForMultiCapture.length === 0) throw new Error("对话中没有消息可捕获。");
-            // For 'conversation', we use the multi-message handler on all messages
             return await captureMultipleMessagesWithHtml2Canvas(messagesForMultiCapture, "conversation_all", {});
         default:
             throw new Error('未知的截图目标类型');
     }
 
     if (!elementToRender && messagesForMultiCapture.length === 0) {
-         throw new Error(`目标元素未找到 (for ${target} within ${chatSelector})`); // Use checked selector
+         throw new Error(`目标元素未找到 (for ${target} within ${chatSelector})`);
     }
 
-    // If a single element target was found and it's not a conversation
     if (elementToRender) {
         let finalElementToCapture = elementToRender;
-        // If includeHeader is false and target is not 'conversation', capture only the text part
         if (!includeHeader && target !== 'conversation' && elementToRender.querySelector(config.messageTextSelector)) {
             const textElement = elementToRender.querySelector(config.messageTextSelector);
             if (textElement) {
@@ -1225,45 +948,35 @@ async function captureMessageWithOptions(options) {
                 console.warn("Could not find text element for includeHeader: false, capturing full message.");
             }
         }
-        // Call the single element capture function, which now uses a temp container internally
         return await captureElementWithHtml2Canvas(finalElementToCapture, {});
     }
-    // Should not reach here if logic is correct, 'conversation' returns early.
     throw new Error("captureMessageWithOptions (h2c-pro v5): Unhandled capture scenario.");
 }
 
-// Installs the screenshot buttons on messages
 function installScreenshotButtons() {
-    // Remove existing buttons first to prevent duplicates
     document.querySelectorAll(`.${config.buttonClass}`).forEach(btn => btn.remove());
 
-    // --- 健壮性检查并获取聊天容器 ---
     const chatSelector = config.chatContentSelector;
     if (typeof chatSelector !== 'string' || !chatSelector) {
          console.error(`${PLUGIN_NAME}: 无法安装按钮，聊天内容容器选择器无效:`, chatSelector);
-         return false; // Cannot install buttons if selector is bad
+         return false;
     }
     const chatContentEl = document.querySelector(chatSelector);
     if (chatContentEl) {
-        // Add buttons to existing messages
         chatContentEl.querySelectorAll(config.messageSelector).forEach(message => addScreenshotButtonToMessage(message));
     } else {
         console.warn(`Chat content ('${chatSelector}') not found for initial button installation.`);
     }
-    // --- End 健壮性检查 ---
 
 
-    // Use MutationObserver to add buttons to new messages as they are added
     const observer = new MutationObserver(mutations => {
       mutations.forEach(mutation => {
         if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
           mutation.addedNodes.forEach(node => {
             if (node.nodeType === Node.ELEMENT_NODE) {
-              // Check if the added node is a message itself
               if (node.matches(config.messageSelector)) {
                 addScreenshotButtonToMessage(node);
               }
-              // Check if the added node contains messages (e.g., chunk of messages added)
               else if (node.querySelectorAll) {
                 node.querySelectorAll(config.messageSelector).forEach(addScreenshotButtonToMessage);
               }
@@ -1273,7 +986,6 @@ function installScreenshotButtons() {
       });
     });
 
-    // Observe the chat content element for changes
     if (chatContentEl) {
       observer.observe(chatContentEl, { childList: true, subtree: true });
     } else {
@@ -1283,23 +995,19 @@ function installScreenshotButtons() {
     return true;
 }
 
-// Adds a screenshot button to a single message element
 function addScreenshotButtonToMessage(messageElement) {
-    // 防止添加重复按钮或添加到非消息元素
     if (!messageElement || !messageElement.querySelector || messageElement.querySelector(`.${config.buttonClass}`)) {
       return;
     }
 
-    // 先找到最外层的消息按钮容器
     let buttonsContainer = messageElement.querySelector('.mes_block .ch_name.flex-container.justifySpaceBetween .mes_buttons');
     if (!buttonsContainer) {
       buttonsContainer = messageElement.querySelector('.mes_block .mes_buttons');
       if (!buttonsContainer) {
-        return;  // 如果找不到任何按钮容器，则退出
+        return;
       }
     }
 
-    // 创建截图按钮元素
     const screenshotButton = document.createElement('div');
     screenshotButton.innerHTML = '<i class="fa-solid fa-camera"></i>';
     screenshotButton.className = `${config.buttonClass} mes_button interactable`; 
@@ -1307,13 +1015,10 @@ function addScreenshotButtonToMessage(messageElement) {
     screenshotButton.setAttribute('tabindex', '0');
     screenshotButton.style.cursor = 'pointer';
 
-    // --- Context Menu Logic ---
     const contextMenu = document.createElement('div');
     contextMenu.className = 'st-screenshot-context-menu';
-    // Apply basic styles directly or via CSS class
     Object.assign(contextMenu.style, { display: 'none', position: 'absolute', zIndex: '10000', background: '#2a2a2a', border: '1px solid #555', borderRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', padding: '5px 0' });
 
-    // Define menu options for multi-message capture
     const menuOptions = [
       { text: '截取前四条消息', action: 'prev4' },
       { text: '截取前三条消息', action: 'prev3' },
@@ -1325,45 +1030,35 @@ function addScreenshotButtonToMessage(messageElement) {
       { text: '截取后四条消息', action: 'next4' }
     ];
 
-    // Create menu items
     menuOptions.forEach(option => {
       const menuItem = document.createElement('div');
       menuItem.className = 'st-screenshot-menu-item';
       menuItem.textContent = option.text;
       Object.assign(menuItem.style, { padding: '8px 12px', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'background-color 0.2s' });
-      // Add hover effect
       menuItem.onmouseover = () => menuItem.style.backgroundColor = '#3a3a3a';
       menuItem.onmouseout = () => menuItem.style.backgroundColor = 'transparent';
 
-      // Add click listener for menu item
       menuItem.onclick = async (e) => {
-        e.stopPropagation(); // Prevent the click from closing the menu immediately via document listener
-        hideContextMenu(); // Hide the menu
-        // Call the multi-message capture handler with the selected action
+        e.stopPropagation();
+        hideContextMenu();
         await captureMultipleMessagesFromContextMenu(messageElement, option.action);
       };
       contextMenu.appendChild(menuItem);
     });
-    // Append menu to the body (or a suitable container)
     document.body.appendChild(contextMenu);
 
-    // Variables for long-press detection
     let pressTimer;
     let isLongPress = false;
 
-    // Functions to show/hide the context menu
     function showContextMenu(x, y) {
       contextMenu.style.display = 'block';
-      // Position the menu, ensuring it stays within the viewport
       const vpW = window.innerWidth;
       const vpH = window.innerHeight;
       const menuW = contextMenu.offsetWidth;
       const menuH = contextMenu.offsetHeight;
 
-      // Adjust coordinates if menu goes off-screen
       if (x + menuW > vpW) x = vpW - menuW - 5;
       if (y + menuH > vpH) y = vpH - menuH - 5;
-      // Prevent menu from going off the top edge
       if (y < 0) y = 5;
 
 
@@ -1377,38 +1072,8 @@ function addScreenshotButtonToMessage(messageElement) {
        console.log('DEBUG: Hiding context menu');
     }
 
-    // Add long-press and click event listeners to the button
     screenshotButton.addEventListener('mousedown', (e) => {
-      // Only trigger long press on left click
       if (e.button !== 0) return;
-      isLongPress = false; // Reset state
-      pressTimer = setTimeout(() => {
-        isLongPress = true;
-        const rect = screenshotButton.getBoundingClientRect();
-        // Position menu below the button
-        showContextMenu(rect.left, rect.bottom + 5);
-      }, 500); // 500ms to trigger long press
-    });
-
-    screenshotButton.addEventListener('mouseup', () => clearTimeout(pressTimer)); // Clear timer on mouse up
-    screenshotButton.addEventListener('mouseleave', () => clearTimeout(pressTimer)); // Clear timer if mouse leaves button
-
-    // Hide menu when clicking anywhere else on the document
-    document.addEventListener('click', (e) => {
-      // Check if the menu is visible and the click was outside the menu AND outside the button itself
-      if (contextMenu.style.display === 'block' && !contextMenu.contains(e.target) && !screenshotButton.contains(e.target)) {
-          hideContextMenu();
-      }
-    });
-
-    // Prevent context menu from appearing on right-click on the button itself
-    screenshotButton.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-    });
-
-    // 添加触摸事件支持
-    screenshotButton.addEventListener('touchstart', (e) => {
-      // 移除 e.preventDefault() 或条件性调用
       isLongPress = false;
       pressTimer = setTimeout(() => {
         isLongPress = true;
@@ -1417,55 +1082,65 @@ function addScreenshotButtonToMessage(messageElement) {
       }, 500);
     });
 
-    screenshotButton.addEventListener('touchend', () => clearTimeout(pressTimer)); // 触摸结束时清除计时器
-    screenshotButton.addEventListener('touchcancel', () => clearTimeout(pressTimer)); // 触摸取消时清除计时器
+    screenshotButton.addEventListener('mouseup', () => clearTimeout(pressTimer));
+    screenshotButton.addEventListener('mouseleave', () => clearTimeout(pressTimer));
 
-    // Add the primary click event listener for single message capture
+    document.addEventListener('click', (e) => {
+      if (contextMenu.style.display === 'block' && !contextMenu.contains(e.target) && !screenshotButton.contains(e.target)) {
+          hideContextMenu();
+      }
+    });
+
+    screenshotButton.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+    });
+
+    screenshotButton.addEventListener('touchstart', (e) => {
+      isLongPress = false;
+      pressTimer = setTimeout(() => {
+        isLongPress = true;
+        const rect = screenshotButton.getBoundingClientRect();
+        showContextMenu(rect.left, rect.bottom + 5);
+      }, 500);
+    });
+
+    screenshotButton.addEventListener('touchend', () => clearTimeout(pressTimer));
+    screenshotButton.addEventListener('touchcancel', () => clearTimeout(pressTimer));
+
     screenshotButton.addEventListener('click', async function(event) {
-      event.preventDefault(); // Prevent any default behavior
-      event.stopPropagation(); // Prevent event from bubbling up
+      event.preventDefault();
+      event.stopPropagation();
 
-      // If a long press occurred, the menu was shown, so don't trigger single capture
       if (isLongPress) {
-        isLongPress = false; // Reset state
+        isLongPress = false;
         return;
       }
 
-      // Prevent multiple clicks while loading
       if (this.classList.contains('loading')) return;
 
-      // Add loading indicator
       const iconElement = this.querySelector('i');
       const originalIconClass = iconElement ? iconElement.className : '';
       if (iconElement) iconElement.className = `fa-solid fa-spinner fa-spin ${config.buttonClass}-icon-loading`;
       this.classList.add('loading');
 
       try {
-        // For a single button click, capture the messageElement itself
-        // includeHeader is implicitly true as we capture the whole messageElement
-        // This now calls the function that uses a temporary container internally
         const dataUrl = await captureElementWithHtml2Canvas(messageElement, {});
-        downloadImage(dataUrl, messageElement, 'message'); // Download the resulting image
+        downloadImage(dataUrl, messageElement, 'message');
       } catch (error) {
         console.error('消息截图失败 (h2c-pro button click v5):', error.stack || error);
         alert(`截图失败: ${error.message || '未知错误'}`);
       } finally {
-        // Remove loading indicator
         if (iconElement) iconElement.className = originalIconClass;
         this.classList.remove('loading');
       }
     });
 
-    // 找到extraMesButtons容器和编辑按钮
     const extraMesButtons = buttonsContainer.querySelector('.extraMesButtons.visible');
     const editButton = buttonsContainer.querySelector('.mes_button.mes_edit.fa-solid.fa-pencil.interactable');
     
-    // 确认找到了两个元素，插入按钮到它们之间
     if (extraMesButtons && editButton) {
-      // 直接在编辑按钮前插入截图按钮
       editButton.insertAdjacentElement('beforebegin', screenshotButton);
     } else {
-      // 如果找不到这两个元素，使用备用方案
       const existingButton = buttonsContainer.querySelector('.fa-edit, .mes_edit');
       if (existingButton) {
         existingButton.insertAdjacentElement('beforebegin', screenshotButton);
@@ -1475,10 +1150,8 @@ function addScreenshotButtonToMessage(messageElement) {
     }
 }
 
-// Handles requests from the long-press context menu to capture multiple messages
-async function captureMultipleMessagesFromContextMenu(currentMessageElement, action) { // Renamed for clarity
+async function captureMultipleMessagesFromContextMenu(currentMessageElement, action) {
     console.log(`[多消息截图 ctx menu h2c-pro v5] Action: ${action} from msg:`, currentMessageElement);
-    // Find the screenshot button on the current message to apply loading state
     const button = currentMessageElement.querySelector(`.${config.buttonClass}`);
     const iconElement = button ? button.querySelector('i') : null;
     const originalIconClass = iconElement ? iconElement.className : '';
@@ -1487,7 +1160,6 @@ async function captureMultipleMessagesFromContextMenu(currentMessageElement, act
     if (iconElement) iconElement.className = `fa-solid fa-spinner fa-spin ${config.buttonClass}-icon-loading`;
 
     try {
-        // --- 健壮性检查并获取聊天容器 ---
         const chatSelector = config.chatContentSelector;
         if (typeof chatSelector !== 'string' || !chatSelector) {
              const errorMsg = `无法进行多消息截图，聊天内容容器选择器无效: '${chatSelector}'`;
@@ -1500,16 +1172,12 @@ async function captureMultipleMessagesFromContextMenu(currentMessageElement, act
              console.error(`${PLUGIN_NAME}:`, errorMsg);
              throw new Error(errorMsg);
         }
-        // --- End 健壮性检查 ---
 
 
-        // Get all message elements in the chat
         let allMessages = Array.from(chatContent.querySelectorAll(config.messageSelector));
-        // Find the index of the current message
         let currentIndex = allMessages.indexOf(currentMessageElement);
         if (currentIndex === -1) throw new Error('无法确定当前消息位置');
 
-        // Determine the range of messages to capture based on the action
         let startIndex = currentIndex;
         let endIndex = currentIndex;
         switch (action) {
@@ -1524,14 +1192,11 @@ async function captureMultipleMessagesFromContextMenu(currentMessageElement, act
             default: throw new Error(`未知多消息截图动作: ${action}`);
         }
 
-        // Extract the target message elements
         const targetMessages = allMessages.slice(startIndex, endIndex + 1);
         if (targetMessages.length === 0) throw new Error('无法获取目标消息进行多条截图');
 
-        // Call the multi-message html2canvas-pro capture function, which uses a temporary container internally
         const dataUrl = await captureMultipleMessagesWithHtml2Canvas(targetMessages, action, {});
 
-        // Download the resulting image
         if (dataUrl) {
             const actionTextMap = {
                 'prev4':'前四条',
@@ -1553,97 +1218,78 @@ async function captureMultipleMessagesFromContextMenu(currentMessageElement, act
         console.error(`[多消息截图 ctx menu h2c-pro v5] 失败 (${action}):`, error.stack || error);
         alert(`截图 (${action}) 失败: ${error.message || '未知错误'}`);
     } finally {
-        // Remove loading indicator
         if (iconElement) iconElement.className = originalIconClass;
         if (button) button.classList.remove('loading');
         console.log(`[多消息截图 ctx menu h2c-pro v5] 完成 (${action})`);
     }
 }
 
-
-// Utility function to download a data URL as a PNG file
 function downloadImage(dataUrl, messageElement = null, typeHint = 'screenshot') {
     const link = document.createElement('a');
-    // Sanitize typeHint for use in filename
     let filename = `SillyTavern_${typeHint.replace(/[^a-z0-9_-]/gi, '_')}`;
 
-    // Attempt to generate a more specific filename if a message element is provided
     if (messageElement && typeof messageElement.querySelector === 'function') {
       const nameSelector = config.messageHeaderSelector + ' .name_text';
       const nameFallbackSelector = config.messageHeaderSelector;
       const nameTextElement = messageElement.querySelector(nameSelector) || messageElement.querySelector(nameFallbackSelector);
-      let senderName = 'Character'; // Default sender name
+      let senderName = 'Character';
       if (nameTextElement && nameTextElement.textContent) {
           senderName = nameTextElement.textContent.trim() || 'Character';
       }
-      // Determine if it's a user message
       const isUser = messageElement.classList.contains('user_mes') || (messageElement.closest && messageElement.closest('.user_mes'));
       const sender = isUser ? 'User' : senderName;
 
-      // Get message ID (fallback to timestamp part if not available)
       const msgIdData = messageElement.getAttribute('mesid') || messageElement.dataset.msgId || messageElement.id;
-      const msgId = msgIdData ? msgIdData.slice(-5) : ('m' + Date.now().toString().slice(-8, -4)); // Use last 5 chars of mesid/data-msg-id/id, or part of timestamp
+      const msgId = msgIdData ? msgIdData.slice(-5) : ('m' + Date.now().toString().slice(-8, -4));
 
-      // Get timestamp (fallback to current time) and format it
       const timestampAttr = messageElement.dataset.timestamp || messageElement.getAttribute('data-timestamp') || new Date().toISOString();
-      const timestamp = timestampAttr.replace(/[:\sTZ.]/g, '_').replace(/__+/g, '_'); // Format timestamp for filename
+      const timestamp = timestampAttr.replace(/[:\sTZ.]/g, '_').replace(/__+/g, '_');
 
-      // Create filename with sender, message ID, and timestamp
-      const filenameSafeSender = sender.replace(/[^a-z0-9_-]/gi, '_').substring(0, 20); // Sanitize and shorten sender name
+      const filenameSafeSender = sender.replace(/[^a-z0-9_-]/gi, '_').substring(0, 20);
       filename = `SillyTavern_${filenameSafeSender}_${msgId}_${timestamp}`;
     } else {
-      // Fallback filename with just type hint and timestamp
       filename += `_${new Date().toISOString().replace(/[:.TZ]/g, '-')}`;
     }
 
-    // Set download filename and trigger download
-    link.download = `${filename}.png`; // Always download as PNG
+    link.download = `${filename}.png`;
     link.href = dataUrl;
     link.click();
     console.log(`Image downloaded as ${filename}.png`);
 }
 
-// Utility function to create the capture overlay
 function createOverlay(message) {
     const overlay = document.createElement('div');
-    overlay.className = 'st-capture-overlay'; // Use CSS class for styling
+    overlay.className = 'st-capture-overlay';
     const statusBox = document.createElement('div');
-    statusBox.className = 'st-capture-status'; // Use CSS class for styling
+    statusBox.className = 'st-capture-status';
     const messageP = document.createElement('p');
     messageP.textContent = message;
     statusBox.appendChild(messageP);
     const progressContainer = document.createElement('div');
-    progressContainer.className = 'st-progress'; // Use CSS class for styling
+    progressContainer.className = 'st-progress';
     const progressBar = document.createElement('div');
-    progressBar.className = 'st-progress-bar'; // Use CSS class for styling
-    progressBar.style.width = '0%'; // Initial progress
+    progressBar.className = 'st-progress-bar';
+    progressBar.style.width = '0%';
     progressContainer.appendChild(progressBar);
     statusBox.appendChild(progressContainer);
     overlay.appendChild(statusBox);
     return overlay;
 }
 
-// Utility function to update the message and progress in the overlay
 function updateOverlay(overlay, message, progressRatio) {
-    // Check if overlay element is still valid and in the document
     if (!overlay || !overlay.parentNode) return;
     const messageP = overlay.querySelector('.st-capture-status p');
     const progressBar = overlay.querySelector('.st-progress-bar');
     if (messageP) messageP.textContent = message;
-    // Ensure progressRatio is between 0 and 1
     const safeProgress = Math.max(0, Math.min(1, progressRatio));
     if (progressBar) progressBar.style.width = `${Math.round(safeProgress * 100)}%`;
 }
 
 function showSettingsPopup() {
-    // 获取当前设置
     const settings = getPluginSettings();
     
-    // 创建自定义弹窗
     const overlay = document.createElement('div');
     overlay.className = 'st-settings-overlay';
-    // --- START: MODIFICATION ---
-    // 采用 dom-to-image 版本的 overlay 样式，实现正确的垂直对齐
     Object.assign(overlay.style, {
         position: 'fixed',
         top: '0',
@@ -1659,8 +1305,6 @@ function showSettingsPopup() {
 
     const popup = document.createElement('div');
     popup.className = 'st-settings-popup';
-    // --- START: MODIFICATION ---
-    // 采用 dom-to-image 版本的 popup 样式
     Object.assign(popup.style, {
         backgroundColor: '#2a2a2a',
         padding: '20px',
@@ -1669,11 +1313,10 @@ function showSettingsPopup() {
         width: '100%',
         maxHeight: '80vh',
         overflowY: 'auto',
-        marginTop: '25vh' // 添加 marginTop 来控制垂直位置
+        marginTop: '25vh'
     });
 
     
-    // 标题
     const title = document.createElement('h3');
     title.textContent = '截图设置';
     title.style.marginTop = '0';
@@ -1681,7 +1324,6 @@ function showSettingsPopup() {
     title.style.textAlign = 'center';
     popup.appendChild(title);
     
-    // 创建设置项 (这部分逻辑保持不变)
     const settingsConfig = [
         { id: 'screenshotDelay', type: 'number', label: '截图前延迟 (ms)', min: 0, max: 2000, step: 50 },
         { id: 'scrollDelay', type: 'number', label: 'UI更新等待 (ms)', min: 0, max: 2000, step: 50 },
@@ -1693,7 +1335,6 @@ function showSettingsPopup() {
         { id: 'debugOverlay', type: 'checkbox', label: '显示调试覆盖层' }
     ];
     
-    // 创建设置控件 (这部分逻辑保持不变)
     settingsConfig.forEach(setting => {
         const settingContainer = document.createElement('div');
         settingContainer.style.margin = '10px 0';
@@ -1727,7 +1368,6 @@ function showSettingsPopup() {
         popup.appendChild(settingContainer);
     });
     
-    // 添加保存按钮 (这部分逻辑保持不变)
     const buttonContainer = document.createElement('div');
     buttonContainer.style.display = 'flex';
     buttonContainer.style.justifyContent = 'center';
@@ -1743,7 +1383,6 @@ function showSettingsPopup() {
     saveButton.style.cursor = 'pointer';
     
     saveButton.addEventListener('click', () => {
-        // 保存设置
         const settings = getPluginSettings();
         
         settingsConfig.forEach(setting => {
@@ -1758,10 +1397,9 @@ function showSettingsPopup() {
             }
         });
         
-        saveSettingsDebounced(); // 持久化设置
-        loadConfig(); // 重新加载配置
+        saveSettingsDebounced();
+        loadConfig();
         
-        // 显示保存成功消息
         const statusMsg = document.createElement('div');
         statusMsg.textContent = '设置已保存！';
         statusMsg.style.color = '#4cb944';
@@ -1769,20 +1407,15 @@ function showSettingsPopup() {
         statusMsg.style.marginTop = '10px';
         buttonContainer.appendChild(statusMsg);
         
-        // 1.5秒后关闭弹窗
         setTimeout(() => {
             if (overlay.parentElement) {
                 document.body.removeChild(overlay);
             }
             
-            // 如果设置了自动安装按钮，重新安装
             if (settings.autoInstallButtons) {
-                // 先移除所有已有按钮
                 document.querySelectorAll(`.${config.buttonClass}`).forEach(btn => btn.remove());
-                // 重新安装
                 installScreenshotButtons();
             } else {
-                // 如果禁用自动安装，移除所有已安装的按钮
                 document.querySelectorAll(`.${config.buttonClass}`).forEach(btn => btn.remove());
             }
         }, 1500);
@@ -1794,12 +1427,6 @@ function showSettingsPopup() {
     overlay.appendChild(popup);
     document.body.appendChild(overlay);
     
-    // --- START: MODIFICATION ---
-    // 简单拖拽功能不再需要，因为 position 不再是 absolute。
-    // 可以安全地删除或注释掉所有与拖拽相关的 event listener。
-    // --- END: MODIFICATION ---
-    
-    // 点击空白区域关闭弹窗
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) document.body.removeChild(overlay);
     });
