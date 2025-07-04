@@ -1635,6 +1635,50 @@ function updateOverlay(overlay, message, progressRatio) {
     if (progressBar) progressBar.style.width = `${Math.round(safeProgress * 100)}%`;
 }
 
+好的，我仔细分析了两个版本的 index.js 文件中关于 showSettingsPopup 函数的实现，找到了导致 html2canvas-pro 插件弹窗位置不正确的原因。
+问题根源分析
+问题的核心在于 CSS定位和Flexbox布局的混合使用不当。
+dom-to-image-more (正常显示) 的实现方式：
+父容器 (Overlay):
+Generated javascript
+Object.assign(overlay.style, { 
+    display: 'flex', 
+    justifyContent: 'center', 
+    alignItems:'flex-start' // 关键点1: 垂直对齐方式为“顶部对齐”
+});
+Use code with caution.
+JavaScript
+子元素 (Popup):
+Generated javascript
+Object.assign(popup.style, { 
+    // ...其他样式...
+    marginTop: '30vh', // 关键点2: 使用 margin-top 将弹窗从顶部推下来
+    // 注意：这里没有使用 position: 'absolute'
+});
+Use code with caution.
+JavaScript
+逻辑解释： 这种方法非常清晰。父容器是一个flex布局，它让子元素（弹窗）在垂直方向上从顶部开始排列 (align-items: flex-start)。然后，通过给弹窗自身一个 30vh 的上边距，精确地把它推到视口下方30%的位置。这种方式布局稳定且可预测。
+html2canvas-pro (显示异常) 的实现方式：
+父容器 (Overlay):
+Generated javascript
+overlay.style.display = 'flex';
+overlay.style.justifyContent = 'center';
+overlay.style.alignItems = 'center'; // 关键点1: 垂直对齐方式为“居中对齐”
+Use code with caution.
+JavaScript
+子元素 (Popup):
+Generated javascript
+popup.style.position = 'absolute'; // 关键点2: 将弹窗设置为了绝对定位
+popup.style.cursor = 'move'; // (为拖拽功能服务)
+Use code with caution.
+JavaScript
+逻辑解释： 这是问题所在。当一个flex容器的子元素被设置为 position: absolute 时，它会脱离flex布局的常规文档流。虽然父容器设置了 align-items: center，但它对这个脱离文档流的绝对定位元素的影响变得不可靠。
+浏览器的实际渲染行为是：它会尝试将这个绝对定位元素的 上边沿 对齐到父容器的垂直中心线。因为你的弹窗有 maxHeight: '80vh'，它非常高，导致弹窗的上半部分被放置在了屏幕中心线的上方，自然就跑出屏幕顶端了。
+解决方案
+要修复这个问题，你需要将 html2canvas-pro 插件的 showSettingsPopup 函数修改得和 dom-to-image-more 的实现方式类似。这不仅能解决定位问题，还能简化代码。
+请打开 html2canvas-pro 插件的 index.js 文件，找到 showSettingsPopup 函数，并将其中的代码替换为以下修正后的版本：
+文件: public/extensions/third-party/sillytavern-screenshot-h2c-pro/index.js
+Generated javascript
 // 新增一个自定义设置弹窗
 function showSettingsPopup() {
     // 获取当前设置
@@ -1643,28 +1687,36 @@ function showSettingsPopup() {
     // 创建自定义弹窗
     const overlay = document.createElement('div');
     overlay.className = 'st-settings-overlay';
-    overlay.style.position = 'fixed';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.width = '100%';
-    overlay.style.height = '100%';
-    overlay.style.backgroundColor = 'rgba(0,0,0,0.7)';
-    overlay.style.zIndex = '10000';
-    overlay.style.display = 'flex';
-    overlay.style.justifyContent = 'center';
-    overlay.style.alignItems = 'center';
+    // --- START: MODIFICATION ---
+    // 采用 dom-to-image 版本的 overlay 样式，实现正确的垂直对齐
+    Object.assign(overlay.style, {
+        position: 'fixed',
+        top: '0',
+        left: '0',
+        width: '100%',
+        height: '100%',
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        zIndex: '10000',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'flex-start'
+    });
 
     const popup = document.createElement('div');
     popup.className = 'st-settings-popup';
-    popup.style.backgroundColor = '#2a2a2a';
-    popup.style.padding = '20px';
-    popup.style.borderRadius = '10px';
-    popup.style.maxWidth = '400px';
-    popup.style.width = '100%';
-    popup.style.maxHeight = '80vh';
-    popup.style.overflowY = 'auto';
-    popup.style.position = 'absolute'; // 修改为绝对定位，便于拖动
-    popup.style.cursor = 'move'; // 添加移动光标
+    // --- START: MODIFICATION ---
+    // 采用 dom-to-image 版本的 popup 样式
+    Object.assign(popup.style, {
+        backgroundColor: '#2a2a2a',
+        padding: '20px',
+        borderRadius: '10px',
+        maxWidth: '400px',
+        width: '100%',
+        maxHeight: '80vh',
+        overflowY: 'auto',
+        marginTop: '25vh' // 添加 marginTop 来控制垂直位置
+    });
+
     
     // 标题
     const title = document.createElement('h3');
@@ -1674,7 +1726,7 @@ function showSettingsPopup() {
     title.style.textAlign = 'center';
     popup.appendChild(title);
     
-    // 创建设置项
+    // 创建设置项 (这部分逻辑保持不变)
     const settingsConfig = [
         { id: 'screenshotDelay', type: 'number', label: '截图前延迟 (ms)', min: 0, max: 2000, step: 50 },
         { id: 'scrollDelay', type: 'number', label: 'UI更新等待 (ms)', min: 0, max: 2000, step: 50 },
@@ -1686,7 +1738,7 @@ function showSettingsPopup() {
         { id: 'debugOverlay', type: 'checkbox', label: '显示调试覆盖层' }
     ];
     
-    // 创建设置控件
+    // 创建设置控件 (这部分逻辑保持不变)
     settingsConfig.forEach(setting => {
         const settingContainer = document.createElement('div');
         settingContainer.style.margin = '10px 0';
@@ -1720,7 +1772,7 @@ function showSettingsPopup() {
         popup.appendChild(settingContainer);
     });
     
-    // 添加保存按钮
+    // 添加保存按钮 (这部分逻辑保持不变)
     const buttonContainer = document.createElement('div');
     buttonContainer.style.display = 'flex';
     buttonContainer.style.justifyContent = 'center';
@@ -1762,9 +1814,11 @@ function showSettingsPopup() {
         statusMsg.style.marginTop = '10px';
         buttonContainer.appendChild(statusMsg);
         
-        // 3秒后关闭弹窗
+        // 1.5秒后关闭弹窗
         setTimeout(() => {
-            document.body.removeChild(overlay);
+            if (overlay.parentElement) {
+                document.body.removeChild(overlay);
+            }
             
             // 如果设置了自动安装按钮，重新安装
             if (settings.autoInstallButtons) {
@@ -1785,58 +1839,10 @@ function showSettingsPopup() {
     overlay.appendChild(popup);
     document.body.appendChild(overlay);
     
-    // 简单拖拽功能
-    let isDragging = false;
-    let offsetX = 0;
-    let offsetY = 0;
-    
-    // 鼠标按下事件
-    popup.addEventListener('mousedown', (e) => {
-        isDragging = true;
-        offsetX = e.clientX - popup.getBoundingClientRect().left;
-        offsetY = e.clientY - popup.getBoundingClientRect().top;
-    });
-    
-    // 触摸开始事件
-    popup.addEventListener('touchstart', (e) => {
-        isDragging = true;
-        offsetX = e.touches[0].clientX - popup.getBoundingClientRect().left;
-        offsetY = e.touches[0].clientY - popup.getBoundingClientRect().top;
-    }, {passive: false});
-    
-    // 鼠标移动事件
-    document.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        
-        const x = e.clientX - offsetX;
-        const y = e.clientY - offsetY;
-        
-        popup.style.left = `${x}px`;
-        popup.style.top = `${y}px`;
-    });
-    
-    // 触摸移动事件
-    document.addEventListener('touchmove', (e) => {
-        if (!isDragging) return;
-        
-        const x = e.touches[0].clientX - offsetX;
-        const y = e.touches[0].clientY - offsetY;
-        
-        popup.style.left = `${x}px`;
-        popup.style.top = `${y}px`;
-        
-        // 阻止页面滚动
-        e.preventDefault();
-    }, {passive: false});
-    
-    // 拖拽结束事件
-    document.addEventListener('mouseup', () => {
-        isDragging = false;
-    });
-    
-    document.addEventListener('touchend', () => {
-        isDragging = false;
-    });
+    // --- START: MODIFICATION ---
+    // 简单拖拽功能不再需要，因为 position 不再是 absolute。
+    // 可以安全地删除或注释掉所有与拖拽相关的 event listener。
+    // --- END: MODIFICATION ---
     
     // 点击空白区域关闭弹窗
     overlay.addEventListener('click', (e) => {
