@@ -1,17 +1,21 @@
-// public/extensions/third-party/sillytavern-screenshot-h2c-pro/index.js
+// public/extensions/third-party/scane/index.js
 
 import {
     extension_settings,
-    getContext,
+    getContext, // 如果需要使用 context 对象，则导入
     renderExtensionTemplateAsync,
+    // loadExtensionSettings // 这个函数通常由 ST 核心调用，插件一般不需要主动导入和调用
 } from '../../../extensions.js';
 
+// 从 script.js 导入
 import {
     saveSettingsDebounced,
     eventSource,
-    event_types,
+    event_types, // 如果需要监听事件，则导入
+    // 其他可能需要的函数，如 messageFormatting, addOneMessage 等
 } from '../../../../script.js';
 
+// 如果你的插件需要弹窗功能，从 popup.js 导入
 import {
     Popup,
     POPUP_TYPE,
@@ -19,61 +23,70 @@ import {
     POPUP_RESULT,
 } from '../../../popup.js';
 
+// 如果需要 UUID 或时间戳处理等工具函数，从 utils.js 导入
 import {
     uuidv4,
     timestampToMoment,
 } from '../../../utils.js';
 
+// 插件的命名空间，与 manifest.json 中的文件夹名称一致
 const PLUGIN_ID = 'html2canvas-pro';
 const PLUGIN_NAME = 'html2canvas-pro';
 
-// MODIFICATION: Added jpgQuality setting
+// 插件的默认设置
 const defaultSettings = {
-    screenshotDelay: 10,
+    screenshotDelay: 10,       // 可以设置更低值，比如 0-20
     scrollDelay: 10,
     autoInstallButtons: true,
     altButtonLocation: true,
-    screenshotScale: 2.0,
+    screenshotScale: 2.0,      // 降低到 1.0 以提高速度
     useForeignObjectRendering: false,
-    letterRendering: true,
-    imageTimeout: 3000,
-    debugOverlay: true,
-    jpgQuality: 0.9, // 新增：JPG图片质量，0.1 (低) to 1.0 (高)
+    letterRendering: true,    // 新增：关闭字形渲染提高文字渲染速度
+    imageTimeout: 3000,        // 新增：缩短图像加载超时
+    debugOverlay: true,        // 新增：是否显示进度遮罩层
+    imageFormat: 'jpg'         // 新增：默认图片格式
 };
 
+// 全局配置对象，将从设置中加载
 const config = {
     buttonClass: 'st-screenshot-button',
-    chatScrollContainerSelector: '#chat',
+    chatScrollContainerSelector: '#chat', // Used for context, not direct scroll iterations for h2c
     chatContentSelector: '#chat',
     messageSelector: '.mes',
     lastMessageSelector: '.mes.last_mes',
     messageTextSelector: '.mes_block .mes_text',
     messageHeaderSelector: '.mes_block .ch_name',
+    // html2canvas options will be loaded from settings
     html2canvasOptions: {
         allowTaint: true,
         useCORS: true,
         backgroundColor: null,
-        logging: false,
+        logging: false,        // 始终关闭日志以提高性能
         removeContainer: true
-    }
+        // 其他选项会从 settings 加载，不要在这里硬编码
+    },
+    imageFormat: 'jpg'         // 新增：默认图片格式
 };
 
+// 确保插件设置已加载并与默认值合并
 function getPluginSettings() {
     extension_settings[PLUGIN_ID] = extension_settings[PLUGIN_ID] || {};
     Object.assign(extension_settings[PLUGIN_ID], { ...defaultSettings, ...extension_settings[PLUGIN_ID] });
     return extension_settings[PLUGIN_ID];
 }
 
+// 加载并应用配置
 function loadConfig() {
     const settings = getPluginSettings();
 
+    // 基本配置
     config.screenshotDelay = parseInt(settings.screenshotDelay, 10) || 0;
     config.scrollDelay = parseInt(settings.scrollDelay, 10) || 0;
     config.autoInstallButtons = settings.autoInstallButtons;
     config.altButtonLocation = settings.altButtonLocation;
     config.debugOverlay = settings.debugOverlay !== undefined ? settings.debugOverlay : true;
-    config.jpgQuality = parseFloat(settings.jpgQuality) || defaultSettings.jpgQuality; // MODIFICATION: Load JPG quality
 
+    // 将所有html2canvas相关设置正确地应用到 html2canvasOptions
     const loadedScale = parseFloat(settings.screenshotScale);
     if (!isNaN(loadedScale) && loadedScale > 0) {
         config.html2canvasOptions.scale = loadedScale;
@@ -81,14 +94,22 @@ function loadConfig() {
         config.html2canvasOptions.scale = defaultSettings.screenshotScale;
     }
 
+    // 添加调试输出
+    console.log('DEBUG: html2canvas配置加载', config.html2canvasOptions);
+
+    // 应用其他html2canvas设置
     config.html2canvasOptions.foreignObjectRendering = settings.useForeignObjectRendering;
     config.html2canvasOptions.letterRendering = settings.letterRendering !== undefined ?
         settings.letterRendering : defaultSettings.letterRendering;
     config.html2canvasOptions.imageTimeout = settings.imageTimeout || defaultSettings.imageTimeout;
 
+    // 加载图片格式设置
+    config.imageFormat = settings.imageFormat || defaultSettings.imageFormat;
+
     console.log(`${PLUGIN_NAME}: 配置已加载并应用:`, config);
 }
 
+// === 动态加载脚本的辅助函数 (保持在 jQuery 闭包外部) ===
 async function loadScript(src) {
     return new Promise((resolve, reject) => {
         const script = document.createElement('script');
@@ -110,8 +131,10 @@ async function getDynamicBackground(elementForContext) {
     if (!chatContainer) {
         return { color: '#1e1e1e', imageInfo: null };
     }
+
     const computedChatStyle = window.getComputedStyle(chatContainer);
-    let backgroundColor = '#1e1e1e';
+    
+    let backgroundColor = '#1e1e1e'; // Fallback
     if (computedChatStyle.backgroundColor && computedChatStyle.backgroundColor !== 'rgba(0, 0, 0, 0)' && computedChatStyle.backgroundColor !== 'transparent') {
         backgroundColor = computedChatStyle.backgroundColor;
     } else {
@@ -120,23 +143,28 @@ async function getDynamicBackground(elementForContext) {
             backgroundColor = pcbVar.trim();
         }
     }
+    
     const bgElement = document.querySelector('#bg1, #bg2') || chatContainer;
     const computedBgStyle = window.getComputedStyle(bgElement);
+    
     let backgroundImageInfo = null;
     if (computedBgStyle.backgroundImage && computedBgStyle.backgroundImage !== 'none') {
         const bgImageUrlMatch = computedBgStyle.backgroundImage.match(/url\("?(.+?)"?\)/);
         if (bgImageUrlMatch) {
             const bgImageUrl = bgImageUrlMatch[1];
+            
             const img = new Image();
             img.src = bgImageUrl;
             await new Promise(resolve => {
                 img.onload = resolve;
                 img.onerror = resolve;
             });
+
             const elementRect = elementForContext.getBoundingClientRect();
             const bgRect = bgElement.getBoundingClientRect();
             const offsetX = elementRect.left - bgRect.left;
             const offsetY = elementRect.top - bgRect.top;
+
             backgroundImageInfo = {
                 url: bgImageUrl,
                 originalWidth: img.naturalWidth || bgRect.width,
@@ -144,14 +172,16 @@ async function getDynamicBackground(elementForContext) {
                 styles: {
                     backgroundImage: computedBgStyle.backgroundImage,
                     backgroundSize: computedBgStyle.backgroundSize,
-                    backgroundRepeat: 'repeat-y',
+                    backgroundRepeat: 'repeat-y', 
                     backgroundPosition: `-${offsetX}px -${offsetY}px`,
                 }
             };
         }
     }
+    
     return { color: backgroundColor, imageInfo: backgroundImageInfo };
 }
+
 
 jQuery(async () => {
     console.log(`${PLUGIN_NAME}: 插件初始化中...`);
@@ -170,10 +200,66 @@ jQuery(async () => {
         settingsHtml = await renderExtensionTemplateAsync(`third-party/${PLUGIN_ID}`, 'settings');
         console.log(`${PLUGIN_NAME}: 成功加载设置面板模板`);
     } catch (error) {
-        // OPTIMIZATION: Removed the fallback HTML string. If the template fails to load,
-        // we log the error and stop, which is cleaner than maintaining a duplicate template.
-        console.error(`${PLUGIN_NAME}: 无法加载设置面板模板，插件设置界面将不可用:`, error);
-        return;
+        console.error(`${PLUGIN_NAME}: 无法加载设置面板模板:`, error);
+        
+        settingsHtml = `
+        <div id="scane2_settings">
+          <h2>ST截图3.0</h2>
+
+          <div class="option-group">
+            <h3>截图操作</h3>
+            <button id="st_h2c_captureLastMsgBtn" class="menu_button">截取最后一条消息</button>
+          </div>
+
+          <hr>
+
+          <div class="option-group">
+            <h3>扩展设置</h3>
+            <div class="option">
+              <label for="st_h2c_screenshotDelay">截图前延迟 (ms):</label>
+              <input type="number" id="st_h2c_screenshotDelay" min="0" max="2000" step="50" value="${defaultSettings.screenshotDelay}">
+            </div>
+            <div class="option">
+              <label for="st_h2c_scrollDelay">UI更新等待 (ms):</label>
+              <input type="number" id="st_h2c_scrollDelay" min="0" max="2000" step="50" value="${defaultSettings.scrollDelay}">
+            </div>
+            <div class="option">
+              <label for="st_h2c_screenshotScale">渲染比例 (Scale):</label>
+              <input type="number" id="st_h2c_screenshotScale" min="0.5" max="4.0" step="0.1" value="${defaultSettings.screenshotScale}">
+            </div>
+            <div class="option">
+              <input type="checkbox" id="st_h2c_useForeignObjectRendering" ${defaultSettings.useForeignObjectRendering ? 'checked' : ''}>
+              <label for="st_h2c_useForeignObjectRendering">尝试快速模式 (兼容性低)</label>
+            </div>
+            <div class="option">
+              <input type="checkbox" id="st_h2c_autoInstallButtons" ${defaultSettings.autoInstallButtons ? 'checked' : ''}>
+              <label for="st_h2c_autoInstallButtons">自动安装消息按钮</label>
+            </div>
+            <div class="option">
+              <input type="checkbox" id="st_h2c_altButtonLocation" ${defaultSettings.altButtonLocation ? 'checked' : ''}>
+              <label for="st_h2c_altButtonLocation">按钮备用位置</label>
+            </div>
+            <div class="option">
+              <input type="checkbox" id="st_h2c_letterRendering" ${defaultSettings.letterRendering ? 'checked' : ''}>
+              <label for="st_h2c_letterRendering">字形渲染</label>
+            </div>
+            <div class="option">
+              <input type="checkbox" id="st_h2c_debugOverlay" ${defaultSettings.debugOverlay ? 'checked' : ''}>
+              <label for="st_h2c_debugOverlay">显示调试覆盖层</label>
+            </div>
+            <div class="option">
+              <label for="st_h2c_imageFormat">图片格式:</label>
+              <select id="st_h2c_imageFormat">
+                <option value="jpg" ${config.imageFormat === 'jpg' ? 'selected' : ''}>JPG</option>
+                <option value="png" ${config.imageFormat === 'png' ? 'selected' : ''}>PNG</option>
+              </select>
+            </div>
+
+            <button id="st_h2c_saveSettingsBtn" class="menu_button">保存设置</button>
+            <div class="status-area" id="st_h2c_saveStatus" style="display:none;"></div>
+          </div>
+        </div>
+        `;
     }
 
     $('#extensions_settings_content').append(settingsHtml);
@@ -189,8 +275,9 @@ jQuery(async () => {
     const saveSettingsBtn = settingsForm.find('#st_h2c_saveSettingsBtn');
     const saveStatusEl = settingsForm.find('#st_h2c_saveStatus');
     const captureLastMsgBtn = settingsForm.find('#st_h2c_captureLastMsgBtn');
+    const letterRenderingEl = settingsForm.find('#st_h2c_letterRendering');
     const debugOverlayEl = settingsForm.find('#st_h2c_debugOverlay');
-    const jpgQualityEl = settingsForm.find('#st_h2c_jpgQuality'); // MODIFICATION: Get JPG quality input
+    const imageFormatSelect = settingsForm.find('#st_h2c_imageFormat');
 
     function updateSettingsUI() {
         const settings = getPluginSettings();
@@ -200,8 +287,13 @@ jQuery(async () => {
         useForeignObjectRenderingEl.prop('checked', settings.useForeignObjectRendering);
         autoInstallButtonsEl.prop('checked', settings.autoInstallButtons);
         altButtonLocationEl.prop('checked', settings.altButtonLocation !== undefined ? settings.altButtonLocation : true);
+        
+        if (letterRenderingEl) letterRenderingEl.prop('checked', settings.letterRendering);
         if (debugOverlayEl) debugOverlayEl.prop('checked', settings.debugOverlay);
-        if (jpgQualityEl) jpgQualityEl.val(settings.jpgQuality); // MODIFICATION: Update JPG quality UI
+        
+        if (imageFormatSelect.length) {
+            imageFormatSelect.val(settings.imageFormat || defaultSettings.imageFormat);
+        }
     }
 
     saveSettingsBtn.on('click', () => {
@@ -213,8 +305,9 @@ jQuery(async () => {
         settings.useForeignObjectRendering = useForeignObjectRenderingEl.prop('checked');
         settings.autoInstallButtons = autoInstallButtonsEl.prop('checked');
         settings.altButtonLocation = altButtonLocationEl.prop('checked');
+        settings.letterRendering = letterRenderingEl.prop('checked');
         settings.debugOverlay = debugOverlayEl.prop('checked');
-        settings.jpgQuality = parseFloat(jpgQualityEl.val()) || defaultSettings.jpgQuality; // MODIFICATION: Save JPG quality setting
+        settings.imageFormat = $('#st_h2c_imageFormat').val();
 
         saveSettingsDebounced();
 
@@ -230,12 +323,14 @@ jQuery(async () => {
     });
 
     captureLastMsgBtn.on('click', async () => {
-        const options = { target: 'last', includeHeader: true };
+        const options = {
+            target: 'last',
+            includeHeader: true
+        };
         try {
             const dataUrl = await captureMessageWithOptions(options);
             if (dataUrl) {
-                // MODIFICATION: Call the new prompt function
-                await promptAndDownloadImage(dataUrl, null, options.target);
+                downloadImage(dataUrl, null, options.target);
             } else {
                 throw new Error('未能生成截图');
             }
@@ -283,11 +378,24 @@ jQuery(async () => {
     function showScreenshotPopup() {
         const overlay = document.createElement('div');
         overlay.className = 'st-screenshot-overlay';
-        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); z-index: 10000; display: flex; justify-content: center; align-items: center;';
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.width = '100%';
+        overlay.style.height = '100%';
+        overlay.style.backgroundColor = 'rgba(0,0,0,0.7)';
+        overlay.style.zIndex = '10000';
+        overlay.style.display = 'flex';
+        overlay.style.justifyContent = 'center';
+        overlay.style.alignItems = 'center';
 
         const popup = document.createElement('div');
         popup.className = 'st-screenshot-popup';
-        popup.style.cssText = 'background-color: #2a2a2a; padding: 20px; border-radius: 10px; max-width: 300px; width: 100%;';
+        popup.style.backgroundColor = '#2a2a2a';
+        popup.style.padding = '20px';
+        popup.style.borderRadius = '10px';
+        popup.style.maxWidth = '300px';
+        popup.style.width = '100%';
 
         const options = [
             { id: 'last_msg', icon: 'fa-camera', text: '截取最后一条消息' },
@@ -298,24 +406,41 @@ jQuery(async () => {
         options.forEach(option => {
             const btn = document.createElement('div');
             btn.className = 'st-screenshot-option';
-            btn.style.cssText = 'display: flex; align-items: center; gap: 10px; padding: 12px; margin: 8px 0; border-radius: 5px; cursor: pointer; background-color: #3a3a3a;';
-            btn.innerHTML = `<i class="fa-solid ${option.icon}" style="font-size: 1.2em;"></i><span>${option.text}</span>`;
+            btn.style.display = 'flex';
+            btn.style.alignItems = 'center';
+            btn.style.gap = '10px';
+            btn.style.padding = '12px';
+            btn.style.margin = '8px 0';
+            btn.style.borderRadius = '5px';
+            btn.style.cursor = 'pointer';
             
-            btn.onmouseover = () => btn.style.backgroundColor = '#4a4a4a';
-            btn.onmouseout = () => btn.style.backgroundColor = '#3a3a3a';
+            btn.innerHTML = `
+                <i class="fa-solid ${option.icon}" style="font-size: 1.2em;"></i>
+                <span>${option.text}</span>
+            `;
+            
+            btn.addEventListener('mouseover', () => btn.style.backgroundColor = '#4a4a4a');
+            btn.addEventListener('mouseout', () => btn.style.backgroundColor = '#3a3a3a');
             
             btn.addEventListener('click', async () => {
+                console.log(`[${PLUGIN_NAME}] ${option.id} clicked`);
                 document.body.removeChild(overlay);
+                
                 try {
-                    let dataUrl;
                     switch(option.id) {
                         case 'last_msg':
-                            dataUrl = await captureMessageWithOptions({ target: 'last', includeHeader: true });
-                            if (dataUrl) await promptAndDownloadImage(dataUrl, null, 'last_message');
+                            const dataUrl = await captureMessageWithOptions({
+                                target: 'last',
+                                includeHeader: true
+                            });
+                            if (dataUrl) downloadImage(dataUrl, null, 'last_message');
                             break;
                         case 'conversation':
-                            dataUrl = await captureMessageWithOptions({ target: 'conversation', includeHeader: true });
-                            if (dataUrl) await promptAndDownloadImage(dataUrl, null, 'conversation');
+                            const convDataUrl = await captureMessageWithOptions({
+                                target: 'conversation',
+                                includeHeader: true
+                            });
+                            if (convDataUrl) downloadImage(convDataUrl, null, 'conversation');
                             break;
                         case 'settings':
                             showSettingsPopup();
@@ -326,6 +451,7 @@ jQuery(async () => {
                     alert(`操作失败: ${error.message || '未知错误'}`);
                 }
             });
+            
             popup.appendChild(btn);
         });
         
@@ -360,6 +486,7 @@ jQuery(async () => {
 });
 
 
+// ### FIX 1 of 3: Remove the red debug border which adds 1px margin ###
 function prepareSingleElementForHtml2CanvasPro(originalElement) {
     if (!originalElement) return null;
 
@@ -438,7 +565,8 @@ function prepareSingleElementForHtml2CanvasPro(originalElement) {
     element.style.height = 'auto';
     element.style.overflow = 'visible';
     
-    element.style.border = '1px solid red';
+    // ### FIX: Removed the debug border that adds unwanted pixels to the screenshot.
+    // element.style.border = '1px solid red';
     
     return element;
 }
@@ -514,8 +642,9 @@ async function handleIframesAsync(clonedElement, originalDocument) {
     await Promise.all(promises);
 }
 
+// ### FIX 2 of 3: Removed container padding and negative offset to perfectly frame the content ###
 async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = {}) {
-    console.log('启动最终截图流程 (已修正并应用偏移):', elementToCapture);
+    console.log('启动最终截图流程:', elementToCapture);
     
     let overlay = null;
     if (config.debugOverlay) {
@@ -536,11 +665,14 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
         const preparedElement = prepareSingleElementForHtml2CanvasPro(elementToCapture);
         if (!preparedElement) throw new Error("无法准备截图元素");
 
+        // ### FIX: Removed the unnecessary negative offset hack.
+        /*
         Object.assign(preparedElement.style, {
             position: 'relative',
             left: '-10px',
             top: '-10px',
         });
+        */
 
         if (overlay) updateOverlay(overlay, '获取并构建背景...', 0.15);
         const background = await getDynamicBackground(elementToCapture);
@@ -550,7 +682,8 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
             left: '-9999px',
             top: '0px',
             width: `${contentWidth}px`,
-            padding: '10px', 
+            // ### FIX: Removed padding to eliminate unwanted margins.
+            padding: '0', 
             backgroundColor: background.color,
             overflow: 'visible',
         });
@@ -587,7 +720,12 @@ async function captureElementWithHtml2Canvas(elementToCapture, h2cUserOptions = 
         });
         
         if (overlay) updateOverlay(overlay, '生成最终图像...', 0.9);
-        finalDataUrl = finalCanvas.toDataURL('image/png');
+        // 根据设置选择图片格式
+        if (config.imageFormat === 'jpg') {
+            finalDataUrl = finalCanvas.toDataURL('image/jpeg', 1.0); // JPG格式质量为1.0
+        } else {
+            finalDataUrl = finalCanvas.toDataURL('image/png');
+        }
 
     } catch (error) {
         console.error('截图流程失败:', error.stack || error);
@@ -626,6 +764,8 @@ function syncDetailsState(origNode, cloneNode) {
     }
 }
 
+
+// ### FIX 3 of 3: Removed container padding for multi-message captures as well. ###
 async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionHint, h2cUserOptions = {}) {
     if (!messagesToCapture || messagesToCapture.length === 0) {
         throw new Error("没有提供消息给 captureMultipleMessagesWithHtml2Canvas");
@@ -642,7 +782,8 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
         tempContainer.style.position = 'absolute';
         tempContainer.style.left = '-9999px';
         tempContainer.style.top = '-9999px';
-        tempContainer.style.padding = '10px';
+        // ### FIX: Removed padding to eliminate unwanted margins.
+        tempContainer.style.padding = '0';
         tempContainer.style.overflow = 'visible';
 
         const firstMessage = messagesToCapture[0];
@@ -699,7 +840,12 @@ async function captureMultipleMessagesWithHtml2Canvas(messagesToCapture, actionH
         const canvas = await html2canvas(tempContainer, finalH2cOptions);
 
         updateOverlay(overlay, '生成图像数据...', 0.8);
-        dataUrl = canvas.toDataURL('image/png');
+        // 根据设置选择图片格式
+        if (config.imageFormat === 'jpg') {
+            dataUrl = canvas.toDataURL('image/jpeg', 1.0); // JPG格式质量为1.0
+        } else {
+            dataUrl = canvas.toDataURL('image/png');
+        }
 
     } catch (error) {
         console.error('html2canvas-pro 多消息截图失败:', error.stack || error);
@@ -952,7 +1098,7 @@ function addScreenshotButtonToMessage(messageElement) {
 
       try {
         const dataUrl = await captureElementWithHtml2Canvas(messageElement, {});
-        await promptAndDownloadImage(dataUrl, messageElement, 'message');
+        downloadImage(dataUrl, messageElement, 'message');
       } catch (error) {
         console.error('消息截图失败 (h2c-pro button click v5):', error.stack || error);
         alert(`截图失败: ${error.message || '未知错误'}`);
@@ -1026,11 +1172,17 @@ async function captureMultipleMessagesFromContextMenu(currentMessageElement, act
 
         if (dataUrl) {
             const actionTextMap = {
-                'prev4':'前四条', 'prev3':'前三条', 'prev2':'前两条', 'prev1':'前一条',
-                'next1':'后一条', 'next2':'后两条', 'next3':'后三条', 'next4':'后四条'
+                'prev4':'前四条',
+                'prev3':'前三条',
+                'prev2':'前两条',
+                'prev1':'前一条',
+                'next1':'后一条',
+                'next2':'后两条',
+                'next3':'后三条',
+                'next4':'后四条'
             };
             const fileNameHint = `ST消息组_${actionTextMap[action] || action}`;
-            await promptAndDownloadImage(dataUrl, currentMessageElement, fileNameHint);
+            downloadImage(dataUrl, currentMessageElement, fileNameHint);
             console.log(`[多消息截图 ctx menu h2c-pro v5] 截图成功 for ${action}`);
         } else {
             throw new Error('多消息截图 html2canvas-pro 生成失败');
@@ -1045,90 +1197,7 @@ async function captureMultipleMessagesFromContextMenu(currentMessageElement, act
     }
 }
 
-/**
- * MODIFICATION: NEW FUNCTION
- * Shows a popup asking the user to choose between JPG and PNG format for download.
- * @param {string} pngDataUrl The base64 data URL of the PNG image.
- * @param {HTMLElement|null} messageElement The message element for filename generation.
- * @param {string} typeHint A hint for the filename.
- */
-async function promptAndDownloadImage(pngDataUrl, messageElement = null, typeHint = 'screenshot') {
-    return new Promise((resolve) => {
-        const overlay = document.createElement('div');
-        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 20000; display: flex; justify-content: center; align-items: center;';
-
-        const dialog = document.createElement('div');
-        dialog.style.cssText = 'background: #2e2e2e; color: white; padding: 25px; border-radius: 8px; text-align: center; box-shadow: 0 5px 15px rgba(0,0,0,0.5);';
-        
-        const title = document.createElement('h4');
-        title.textContent = '选择下载格式';
-        title.style.marginTop = '0';
-        dialog.appendChild(title);
-
-        const buttonContainer = document.createElement('div');
-        buttonContainer.style.marginTop = '20px';
-        buttonContainer.style.display = 'flex';
-        buttonContainer.style.gap = '15px';
-
-        const downloadJpgBtn = document.createElement('button');
-        downloadJpgBtn.textContent = '下载 JPG (文件较小)';
-        downloadJpgBtn.className = 'menu_button';
-        downloadJpgBtn.style.backgroundColor = '#4CAF50';
-        
-        const downloadPngBtn = document.createElement('button');
-        downloadPngBtn.textContent = '下载 PNG (无损)';
-        downloadPngBtn.className = 'menu_button';
-        
-        buttonContainer.appendChild(downloadJpgBtn);
-        buttonContainer.appendChild(downloadPngBtn);
-        dialog.appendChild(buttonContainer);
-        overlay.appendChild(dialog);
-        document.body.appendChild(overlay);
-
-        const close = () => {
-            if (overlay.parentElement) {
-                document.body.removeChild(overlay);
-            }
-            resolve();
-        };
-
-        downloadJpgBtn.onclick = () => {
-            const img = new Image();
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                canvas.width = img.width;
-                canvas.height = img.height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0);
-                const jpgDataUrl = canvas.toDataURL('image/jpeg', config.jpgQuality);
-                downloadImage(jpgDataUrl, 'jpg', messageElement, typeHint);
-                close();
-            };
-            img.src = pngDataUrl;
-        };
-
-        downloadPngBtn.onclick = () => {
-            downloadImage(pngDataUrl, 'png', messageElement, typeHint);
-            close();
-        };
-
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                close();
-            }
-        });
-    });
-}
-
-/**
- * MODIFICATION: MODIFIED FUNCTION
- * Downloads the image data with a specific format extension.
- * @param {string} dataUrl The base64 data URL of the image.
- * @param {string} format The file format extension ('png' or 'jpg').
- * @param {HTMLElement|null} messageElement The message element for filename generation.
- * @param {string} typeHint A hint for the filename.
- */
-function downloadImage(dataUrl, format, messageElement = null, typeHint = 'screenshot') {
+function downloadImage(dataUrl, messageElement = null, typeHint = 'screenshot') {
     const link = document.createElement('a');
     let filename = `SillyTavern_${typeHint.replace(/[^a-z0-9_-]/gi, '_')}`;
 
@@ -1155,10 +1224,12 @@ function downloadImage(dataUrl, format, messageElement = null, typeHint = 'scree
       filename += `_${new Date().toISOString().replace(/[:.TZ]/g, '-')}`;
     }
 
-    link.download = `${filename}.${format}`;
+    // 根据当前设置选择正确的文件扩展名
+    const fileExtension = config.imageFormat || 'jpg';
+    link.download = `${filename}.${fileExtension}`;
     link.href = dataUrl;
     link.click();
-    console.log(`Image downloaded as ${filename}.${format}`);
+    console.log(`Image downloaded as ${filename}.${fileExtension}`);
 }
 
 function createOverlay(message) {
@@ -1195,40 +1266,62 @@ function showSettingsPopup() {
     const overlay = document.createElement('div');
     overlay.className = 'st-settings-overlay';
     Object.assign(overlay.style, {
-        position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
-        backgroundColor: 'rgba(0,0,0,0.7)', zIndex: '10000',
-        display: 'flex', justifyContent: 'center', alignItems: 'flex-start'
+        position: 'fixed',
+        top: '0',
+        left: '0',
+        width: '100%',
+        height: '100%',
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        zIndex: '10000',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'flex-start'
     });
 
     const popup = document.createElement('div');
     popup.className = 'st-settings-popup';
     Object.assign(popup.style, {
-        backgroundColor: '#2a2a2a', padding: '20px', borderRadius: '10px',
-        maxWidth: '400px', width: '100%', maxHeight: '80vh',
-        overflowY: 'auto', marginTop: '25vh'
+        backgroundColor: '#2a2a2a',
+        padding: '20px',
+        borderRadius: '10px',
+        maxWidth: '400px',
+        width: '100%',
+        maxHeight: '80vh',
+        overflowY: 'auto',
+        marginTop: '25vh'
     });
 
     
     const title = document.createElement('h3');
     title.textContent = '截图设置';
-    title.style.cssText = 'margin-top: 0; margin-bottom: 15px; text-align: center;';
+    title.style.marginTop = '0';
+    title.style.marginBottom = '15px';
+    title.style.textAlign = 'center';
     popup.appendChild(title);
     
     const settingsConfig = [
         { id: 'screenshotDelay', type: 'number', label: '截图前延迟 (ms)', min: 0, max: 2000, step: 50 },
         { id: 'scrollDelay', type: 'number', label: 'UI更新等待 (ms)', min: 0, max: 2000, step: 50 },
         { id: 'screenshotScale', type: 'number', label: '渲染比例 (Scale)', min: 0.5, max: 4.0, step: 0.1 },
-        { id: 'jpgQuality', type: 'number', label: 'JPG 图片质量', min: 0.1, max: 1.0, step: 0.05 },
         { id: 'useForeignObjectRendering', type: 'checkbox', label: '尝试快速模式 (兼容性低)' },
         { id: 'autoInstallButtons', type: 'checkbox', label: '自动安装消息按钮' },
         { id: 'altButtonLocation', type: 'checkbox', label: '按钮备用位置' },
         { id: 'letterRendering', type: 'checkbox', label: '字形渲染' },
-        { id: 'debugOverlay', type: 'checkbox', label: '显示调试覆盖层' }
+        { id: 'debugOverlay', type: 'checkbox', label: '显示调试覆盖层' },
+        { id: 'imageFormat', type: 'select', label: '图片格式', 
+          options: [
+              { value: 'jpg', label: 'JPG (更小体积)' },
+              { value: 'png', label: 'PNG (无损质量)' }
+          ]
+        },
     ];
     
     settingsConfig.forEach(setting => {
         const settingContainer = document.createElement('div');
-        settingContainer.style.cssText = 'margin: 10px 0; display: flex; justify-content: space-between; align-items: center;';
+        settingContainer.style.margin = '10px 0';
+        settingContainer.style.display = 'flex';
+        settingContainer.style.justifyContent = 'space-between';
+        settingContainer.style.alignItems = 'center';
         
         const label = document.createElement('label');
         label.textContent = setting.label;
@@ -1250,6 +1343,18 @@ function showSettingsPopup() {
             input.step = setting.step;
             input.value = settings[setting.id];
             input.style.width = '80px';
+        } else if (setting.type === 'select') {
+            input = document.createElement('select');
+            input.id = `st_setting_${setting.id}`;
+            setting.options.forEach(option => {
+                const optElement = document.createElement('option');
+                optElement.value = option.value;
+                optElement.textContent = option.label;
+                if (settings[setting.id] === option.value) {
+                    optElement.selected = true;
+                }
+                input.appendChild(optElement);
+            });
         }
         
         settingContainer.appendChild(input);
@@ -1257,11 +1362,18 @@ function showSettingsPopup() {
     });
     
     const buttonContainer = document.createElement('div');
-    buttonContainer.style.cssText = 'display: flex; justify-content: center; margin-top: 20px;';
+    buttonContainer.style.display = 'flex';
+    buttonContainer.style.justifyContent = 'center';
+    buttonContainer.style.marginTop = '20px';
     
     const saveButton = document.createElement('button');
     saveButton.textContent = '保存设置';
-    saveButton.style.cssText = 'padding: 8px 16px; border-radius: 4px; background-color: #4dabf7; border: none; color: white; cursor: pointer;';
+    saveButton.style.padding = '8px 16px';
+    saveButton.style.borderRadius = '4px';
+    saveButton.style.backgroundColor = '#4dabf7';
+    saveButton.style.border = 'none';
+    saveButton.style.color = 'white';
+    saveButton.style.cursor = 'pointer';
     
     saveButton.addEventListener('click', () => {
         const settings = getPluginSettings();
@@ -1275,6 +1387,8 @@ function showSettingsPopup() {
                 if (isNaN(settings[setting.id])) {
                     settings[setting.id] = defaultSettings[setting.id];
                 }
+            } else if (setting.type === 'select') {
+                settings[setting.id] = input.value;
             }
         });
         
@@ -1283,7 +1397,9 @@ function showSettingsPopup() {
         
         const statusMsg = document.createElement('div');
         statusMsg.textContent = '设置已保存！';
-        statusMsg.style.cssText = 'color: #4cb944; text-align: center; margin-top: 10px;';
+        statusMsg.style.color = '#4cb944';
+        statusMsg.style.textAlign = 'center';
+        statusMsg.style.marginTop = '10px';
         buttonContainer.appendChild(statusMsg);
         
         setTimeout(() => {
